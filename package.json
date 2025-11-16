@@ -1,0 +1,83 @@
+{
+  "name": "horny-downloader",
+  "version": "1.0.0",
+  "description": "Horny Downloader",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/TokyoTF/horny-downloader.git"
+  },
+  "main": "./out/main/index.js",
+  "author": "TokyoTF",
+  "scripts": {
+    "format": "prettier --plugin prettier-plugin-svelte --write .",
+    "lint": "eslint . --ext .js,.jsx,.cjs,.mjs,.ts,.tsx,.cts,.mts --fix",
+    "start": "electron-vite preview",
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "postinstall": "electron-builder install-app-deps",
+    "build:unpack": "npm run build && electron-builder --dir",
+    "build:win": "npm run build && electron-builder --win",
+    "build:mac": "npm run build && electron-builder --mac",
+    "build:linux": "npm run build && electron-builder --linux"
+  },
+  "dependencies": {
+    "@electron-toolkit/preload": "^3.0.1",
+    "@electron-toolkit/utils": "^4.0.0",
+    "@tailwindcss/vite": "^4.1.14",
+    "cheerio": "^1.1.2",
+    "dashjs": "^5.0.3",
+    "date-and-time": "^4.1.0",
+    "electron-updater": "^6.1.7",
+    "fetch-cookie": "^3.1.0",
+    "fluent-ffmpeg": "^2.1.3",
+    "fs-extra": "^11.3.2",
+    "hls.js": "^1.6.13",
+    "lucide-svelte": "^0.545.0",
+    "m3u8-parser": "^7.2.0",
+    "mpd-parser": "^1.3.1",
+    "node-fetch": "^3.3.2",
+    "sqlite3": "^5.1.7",
+    "svelte-french-toast": "^1.2.0",
+    "tailwindcss": "^4.1.14",
+    "vidstack": "^1.12.13"
+  },
+  "build": {
+    "appId": "com.tokyotf.horny-downloader",
+    "productName": "Horny Downloader",
+    "copyright": "Copyright © 2025 TokyoTF",
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "TokyoTF",
+        "repo": "horny-downloader"
+      }
+    ],
+    "win": {
+      "target": ["nsis"],
+      "publish": ["github"]
+    },
+    "mac": {
+      "category": "public.app-category.utilities",
+      "target": ["dmg"],
+      "publish": ["github"]
+    },
+    "linux": {
+      "target": ["AppImage", "deb"],
+      "publish": ["github"]
+    }
+  },
+  "devDependencies": {
+    "@electron-toolkit/eslint-config": "^2.1.0",
+    "@electron-toolkit/eslint-config-prettier": "^3.0.0",
+    "@sveltejs/vite-plugin-svelte": "^6.2.1",
+    "electron": "^38.2.2",
+    "electron-builder": "^26.0.12",
+    "electron-vite": "^4.0.1",
+    "eslint": "^9.37.0",
+    "eslint-plugin-svelte": "^3.12.4",
+    "prettier": "^3.6.2",
+    "prettier-plugin-svelte": "^3.4.0",
+    "svelte": "^5.39.11",
+    "vite": "^7.1.9"
+  }
+}

@@ -1,0 +1,148 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap');
+
+@import "tailwindcss";
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  font-family: "Inter", sans-serif;
+}
+
+ul {
+  list-style: none;
+}
+
+body {
+  min-height: 100vh;
+  color: white;
+  line-height: 1.6;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-family: "Inter", sans-serif;
+  font-optical-sizing: auto;
+}
+
+.scroll::-webkit-scrollbar {
+  width: 9px;
+}
+
+.scroll::-webkit-scrollbar-track {
+  background: #f9f9f92a;
+  padding: 5px;
+}
+
+.scroll::-webkit-scrollbar-thumb {
+  background: #727272;
+}
+
+body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+}
+
+*:focus {
+    outline: none;
+}
+
+#app {
+  overflow: hidden;
+  background: #161616;
+  width: 100%;
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+
+video{
+  width: 100%;
+  height: 100%;
+}
+
+.no_move {
+
+  -webkit-app-region: no-drag;
+}
+.move {-webkit-app-region: drag;}
+
+.size {
+  width: 450px;
+  height: 350px;
+  min-width: 450px;
+  min-height: 350px;
+  max-width: 450px;
+  max-height: 350px;
+  border-radius: 10px;
+  background-color: #242424;
+}
+
+.video_preview {
+  width: 450px;
+  height: 350px;
+  display: contents;
+}
+
+
+label.label_checkbox input{
+  display: none;
+}
+label.label_checkbox input:checked ~ .checkbox-type-format{
+  box-shadow: 0px 0px 0px 1px #F14B69;
+ }
+ 
+.checkbox-type-format {
+  width: fit-content;
+  font-size: 13px;
+  padding: 3px 10px;
+  border-radius: 5rem;
+  box-shadow: 0px 0px 0px 1px #f14b6900;
+  background-color: #242424;
+}
+
+.container_video {
+  width: 50vw;
+  min-width: 22rem;
+  display: flex;
+  flex-direction: column;
+  align-self: start;
+}
+
+.disable_embed {
+  display: none;
+}
+
+media-pip-button {
+  display:none;
+}
+
+.container_video_preconfig {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.custom_selector {
+  width: 160px;
+  padding: 7px 10px;
+  outline: none;
+  border: none;
+  color: white;
+  font-size: 14px;
+  font-weight: 300;
+  margin-top: 4px;
+  background-color: #242424;
+}
+
+.custom_selector option {
+  font-weight: 300;
+}
+
+.custom_title p {
+  font-size: 14px;
+  font-weight: 300;
+}
