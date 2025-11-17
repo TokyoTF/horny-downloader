@@ -334,6 +334,25 @@
     settings_open = false
   }
 
+  function clearLocalStorage() {
+    localStorage.clear()
+    settings = {
+      default_format: 'mkv',
+      concurrent_downloads: 3,
+      namefile_type: 'video_title',
+      threads: '1',
+      download_folder: '',
+      ffmpeg_path: '',
+      use_embed:false
+    }
+    toast.success('LocalStorage cleared and settings reset', {
+      icon: '🗑️',
+      style: 'background:#242424;color:white;',
+      duration: 2000,
+      position: 'bottom-right'
+    })
+  }
+
   function toSeconds(timemark) {
   if (!timemark) return 0
   const parts = timemark.split(':')
@@ -861,19 +880,27 @@
           </div>
         </div>
 
-        <div class="bg-[#252525] px-6 py-4 border-t border-[#3a3a3a] flex justify-end space-x-3">
+        <div class="bg-[#252525] px-6 py-4 border-t border-[#3a3a3a] flex justify-between items-center">
           <button
-            onclick={closeSettings}
-            class="px-4 py-2 text-sm font-medium text-gray-300 hover:text-white bg-[#333333] hover:bg-[#3d3d3d] rounded-lg transition-colors duration-200"
+            onclick={clearLocalStorage}
+            class="px-4 py-2 text-sm font-medium text-red-400 hover:text-red-300 bg-[#333333] hover:bg-[#3d3d3d] rounded-lg transition-colors duration-200"
           >
-            Cancel
+            Clear LocalStorage
           </button>
-          <button
-            onclick={saveSettings}
-            class="px-5 py-2 text-sm font-medium text-white bg-gradient-to-r from-[#FF9027] to-[#FF6B00] hover:from-[#FF9C3F] hover:to-[#FF7B1C] rounded-lg transition-all duration-200 transform hover:scale-105  focus:ring-offset-2 focus:ring-offset-[#1e1e1e] shadow-lg hover:shadow-[#FF9027]/20"
-          >
-            Save Changes
-          </button>
+          <div class="flex space-x-3">
+            <button
+              onclick={closeSettings}
+              class="px-4 py-2 text-sm font-medium text-gray-300 hover:text-white bg-[#333333] hover:bg-[#3d3d3d] rounded-lg transition-colors duration-200"
+            >
+              Cancel
+            </button>
+            <button
+              onclick={saveSettings}
+              class="px-5 py-2 text-sm font-medium text-white bg-gradient-to-r from-[#FF9027] to-[#FF6B00] hover:from-[#FF9C3F] hover:to-[#FF7B1C] rounded-lg transition-all duration-200 transform hover:scale-105  focus:ring-offset-2 focus:ring-offset-[#1e1e1e] shadow-lg hover:shadow-[#FF9027]/20"
+            >
+              Save Changes
+            </button>
+          </div>
         </div>
       </div>
     </div>
