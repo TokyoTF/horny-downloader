@@ -20,6 +20,66 @@ A powerful desktop application for downloading videos from various adult content
 - All application data is stored locally using **SQLite** in a `data.db` file
 - Thumbnails and temporary files are stored in the `temp` folder
 
+## 📦 Extensions
+
+This application uses a modular extension system to support different video sites. Extensions are located in the `extensions/` folder and are automatically loaded when the application starts.
+
+### 🔧 Adding New Extensions from GitHub
+
+You can easily add new extensions by downloading them from GitHub and placing them in the extensions folder.
+
+#### Method 1: Download Individual Extension Files
+
+1. **Find the extension** on GitHub that you want to add
+2. **Navigate to the extension file** (usually ends with `Extension.js`)
+3. **Click the "Download Raw File" button** to view the raw file content
+5. **Place the file** in your `extensions/` folder
+6. **Restart the application** to load the new extension
+
+#### Extension File Requirements
+
+Extension files must:
+- Be named with `Extension.js` suffix (e.g., `NewSiteExtension.js`)
+- Extend the base `Extension` class
+- Export a default class
+- Include proper configuration in the constructor
+
+#### Example Extension Structure
+
+```javascript
+import Extension from './base/Extension.js'
+
+export default class NewSiteExtension extends Extension {
+  constructor() {
+    super({
+      domains_support: ['example.com'],
+      domains_includes: ['/video/', '/watch/'],
+      embed_preview: 'embed',
+      prefix_url: 'example.com',
+      referer: false,
+      format_support: ['mp4'],
+      vtt_support: false,
+      quality_support: ['1080', '720', '480']
+    })
+  }
+
+  async extract(url) {
+    // Your extraction logic here
+    return this.createResponse({
+      embed: 'https://example.com/embed/video123',
+      video_test: 'https://example.com/video.mp4',
+      list_quality: [
+        { quality: '720', url: 'https://example.com/video720.mp4' }
+      ],
+      title: 'Video Title',
+      time: '10:30',
+      thumb: 'https://example.com/thumb.jpg',
+      status: 200
+    })
+  }
+}
+```
+
 ## 🌐 Supported Sites
 
 - PornHub
