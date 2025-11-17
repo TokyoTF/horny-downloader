@@ -3,6 +3,12 @@ import { dialog, ipcMain, BrowserWindow } from 'electron'
 
 autoUpdater.autoDownload = false
 
+autoUpdater.setFeedURL({
+  provider: 'github',
+  owner: 'TokyoTF',
+  repo: 'horny-downloader'
+})
+
 autoUpdater.on('update-available', (info) => {
 
   const win = BrowserWindow.getFocusedWindow()
