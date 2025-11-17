@@ -1,5 +1,6 @@
 <script>
   import UpdateNotification from './components/UpdateNotification.svelte'
+  import { updateBanner,showUpdateBanner } from './components/store'
   import 'vidstack/player/styles/base.css'
   import 'vidstack/player/styles/plyr/theme.css'
   import 'vidstack/player'
@@ -35,8 +36,6 @@
   let site_video = ''
   let url_video = $state('')
   let window_video = $state(false)
-  let updateAvailable = $state(false)
-  let updateDownloaded = $state(false)
   let progressList = 0
   let extensions_status = $state({})
   onMount(async () => {
@@ -128,7 +127,7 @@
     toast.success('The list loaded successfully', {
       icon: '⭐',
       style: 'background:#242424;color:white;',
-      duration: 2500,
+      duration: 1500,
       position: 'bottom-right'
     })
     console.timeEnd('LoadingList')
@@ -458,15 +457,12 @@
     <div class="flex items-baseline gap-1.5">
       <h1 class="text-white text-sm font-medium">Horny Downloader</h1>
       <span class="text-xs text-gray-400">v{appVersion}</span>
-      {#if updateAvailable}
+      {#if $updateBanner}
         <button
-          onclick={() => window.api.updater.checkForUpdates()}
+          onclick={() => $showUpdateBanner = !$showUpdateBanner}
           class="ml-1.5 px-2 py-0.5 no_move text-xs font-medium rounded-full bg-blue-600 text-white flex items-center gap-1.5 hover:bg-blue-700 transition-colors"
         >
           <span>Update Available</span>
-          {#if updateDownloaded}
-            <span class="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse"></span>
-          {/if}
         </button>
       {/if}
     </div>

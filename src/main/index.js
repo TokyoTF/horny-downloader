@@ -1,16 +1,12 @@
 import { app, shell, BrowserWindow, ipcMain, session, dialog } from 'electron'
 import path from 'path'
-
 import ExtensionRegistry from '../../extensions/ExtensionRegistry.js'
-
 import { is, optimizer} from '@electron-toolkit/utils'
-
 import sqlite3 from 'sqlite3'
 import { existsSync, mkdirSync, writeFile, unlinkSync, statSync } from 'fs'
 const sql = sqlite3.verbose()
 const db = new sql.Database('./data.db')
 import { setupAutoUpdater } from './autoUpdater'
-
 import { randomUUID } from 'crypto'
 
 const extensionRegistry = new ExtensionRegistry()
@@ -402,14 +398,15 @@ function createWindow() {
   } else {
     mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'))
   }
+  
+  if(!is.dev){
+    setupAutoUpdater()
+  }
+ 
 }
 
 app.whenReady().then(async () => {
   app.setAppUserModelId('com.tokyotf.horny-downloader')
-
-  if (!is.dev) {
-    setupAutoUpdater()
-  }
 
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
@@ -458,7 +455,6 @@ app.whenReady().then(async () => {
     return app.getVersion()
   })
 
-  // Extension status handlers
   ipcMain.handle('get-extensions-status', async () => {
     try {
       const status = await extensionRegistry.getAllExtensionsStatus()

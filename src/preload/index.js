@@ -2,24 +2,11 @@ import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 
 const updater = {
-  checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
-  downloadUpdate: () => ipcRenderer.invoke('download-update'),
-  onUpdateAvailable: (callback) => {
-    const listener = (event, ...args) => callback(...args);
-    ipcRenderer.on('update-available', listener);
-    return () => ipcRenderer.removeListener('update-available', listener);
-  },
-  onDownloadProgress: (callback) => {
-    const listener = (event, ...args) => callback(...args);
-    ipcRenderer.on('download-progress', listener);
-    return () => ipcRenderer.removeListener('download-progress', listener);
-  },
-  onUpdateError: (callback) => {
-    const listener = (event, ...args) => callback(...args);
-    ipcRenderer.on('update-error', listener);
-    return () => ipcRenderer.removeListener('update-error', listener);
-  },
-  restartAndUpdate: () => ipcRenderer.send('restart-and-update')
+    onUpdateAvailable: (callback) => ipcRenderer.on('update-available', callback),
+    checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
+    onUpdateDownloaded: (callback) => ipcRenderer.on('update-downloaded', callback),
+    downloadUpdate: () => ipcRenderer.invoke('download-update'),
+    restartAndUpdate: () => ipcRenderer.invoke('restart-and-update')
 };
 const api = {
   updater: {
