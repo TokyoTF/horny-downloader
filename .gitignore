@@ -9,3 +9,6 @@ data.db
 bun.lock
 electron.vite.config.*.mjs
 .vscode
+.env
+dev-app-update.yml
+app-update.yml
