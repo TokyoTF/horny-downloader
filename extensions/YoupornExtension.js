@@ -19,7 +19,7 @@ export default class YoupornExtension extends Extension {
     let list_quality = []
 
     const videoId = this.extractVideoId(url)
-    const videoUrl = `https://${this.config.prefix_url}/${videoId}`
+    const videoUrl = `https://${this.config.prefix_url}/watch/${videoId}`
 
     const req = await fetch(videoUrl, {
       headers: this.getDefaultHeaders({
@@ -68,15 +68,13 @@ export default class YoupornExtension extends Extension {
 
     const res_req = await (await fetch(mediaDefs[0].videoUrl)).json()
 
-    let temp_qualitys = []
     res_req.forEach((el) => {
-      temp_qualitys.push({
+      list_quality.push({
         quality: el.quality,
         url: el.videoUrl
       })
     })
 
-    list_quality = temp_qualitys
     const video_test = list_quality.length ? list_quality[0].url : ''
 
     return this.createResponse({
