@@ -109,7 +109,7 @@ export default class NewSiteExtension extends Extension {
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/yourusername/horny-downloader.git
+   git clone https://github.com/TokyoTF/horny-downloader.git
    cd horny-downloader
    ```
 
