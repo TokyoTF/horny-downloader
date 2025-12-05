@@ -12,3 +12,4 @@ electron.vite.config.*.mjs
 .env
 dev-app-update.yml
 app-update.yml
+package-lock.json
