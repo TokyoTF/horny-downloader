@@ -17,6 +17,8 @@ A powerful desktop application for downloading videos from various adult content
 - 💾 Save videos in different formats
 - ⚡ Quick preview of videos before downloading
 
+
+## screenshots
 <img width="338" height="739" alt="Capt222ura" src="https://github.com/user-attachments/assets/bb4afb77-6681-4779-bf35-662c8afd9713" />
 
 <img width="331" height="732" alt="Catttptura" src="https://github.com/user-attachments/assets/0cf52c37-7b88-48ef-bb63-c515088713dd" />
