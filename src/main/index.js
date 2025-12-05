@@ -56,6 +56,10 @@ function runFfmpegDownload(
   return new Promise((resolve, reject) => {
     const cmd = ffmpeg()
       .input(srcUrl)
+      .inputOptions([
+        '-user_agent',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+      ])
       .outputOptions(
         opts && opts.mapAudio
           ? ['-c', 'copy', '-map', '0:v:0', '-map', '0:a:0', '-threads', local_settings.threads]

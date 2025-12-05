@@ -28,13 +28,19 @@ This application uses a modular extension system to support different video site
 
 You can easily add new extensions by downloading them from GitHub and placing them in the extensions folder.
 
-#### Method 1: Download Individual Extension Files
+#### 📄 List of extensions
+
+A comprehensive list of available extensions can be found on the repository: [Horny Downloader Extensions](https://github.com/TokyoTF/horny-downloader/tree/main/extensions)
+
+#### 📦 Method 1: Download Individual Extension Files
 
 1. **Find the extension** on GitHub that you want to add
 2. **Navigate to the extension file** (usually ends with `Extension.js`)
 3. **Click the "Download Raw File" button** to view the raw file content
 5. **Place the file** in your `extensions/` folder
 6. **Restart the application** to load the new extension
+
+
 
 #### Extension File Requirements
 
