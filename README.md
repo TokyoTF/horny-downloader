@@ -4,6 +4,9 @@
 
 A powerful desktop application for downloading videos from various adult content websites with a clean, user-friendly interface.
 
+#### 📄 List of extensions
+[Horny Downloader Extensions](https://github.com/TokyoTF/horny-downloader/tree/main/extensions)
+
 
 ## ✨ Features
 
@@ -28,13 +31,15 @@ This application uses a modular extension system to support different video site
 
 You can easily add new extensions by downloading them from GitHub and placing them in the extensions folder.
 
-#### Method 1: Download Individual Extension Files
+#### 📦 Method 1: Download Individual Extension Files
 
 1. **Find the extension** on GitHub that you want to add
 2. **Navigate to the extension file** (usually ends with `Extension.js`)
 3. **Click the "Download Raw File" button** to view the raw file content
 5. **Place the file** in your `extensions/` folder
 6. **Restart the application** to load the new extension
+
+
 
 #### Extension File Requirements
 
