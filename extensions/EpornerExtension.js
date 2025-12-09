@@ -23,7 +23,7 @@ export default class EpornerExtension extends Extension {
     )
     const viewApi = await reqApi.json()
 
-    const title = viewApi.title
+    const title = decodeURIComponent(escape(viewApi.title))
     const thumb = viewApi.default_thumb?.src || ''
     const duration = viewApi.length_sec || 0
     const time_video = this.formatDuration(duration)
