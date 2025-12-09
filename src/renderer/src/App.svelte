@@ -46,7 +46,6 @@
   async function loadExtensionsStatus() {
     try {
       extensions_status = await window.electron.ipcRenderer.invoke('get-extensions-status')
-      console.log(extensions_status.loaded)
     } catch (error) {
       console.error('Error loading extensions status:', error)
     }
@@ -173,7 +172,7 @@
       case 'xnxx':
         return '#0B5CFFb0'
       case 'xhamster':
-        return '#E21B1Bb0'
+        return '#fffb0'
       case 'spankbang':
         return '#00C3B6b0'
       case 'beeg':
@@ -188,6 +187,10 @@
         return '#00AEEFb0'
       case 'thumbzilla':
         return '#2ECC71b0'
+      case 'pornone':
+        return '#fd4045b0'
+      case 'eporner':
+        return '#ff5454b0'
       default:
         return '#242424b0'
     }
@@ -211,7 +214,6 @@
   }
 
   function updateList(v) {
-    console.log(v)
     if (v.status == 200) {
       video_test = !v.force_type ? { src: v.video_test } : { src: v.video_test, type: v.force_type }
       title_video = decodeURI(v.title)
@@ -220,7 +222,6 @@
       site_video = v.site
       url_video = v.url
       embed = v.embed
-      getdata = false
       quality_list = v.list_quality.sort((a, b) => b.quality - a.quality)
       selected_quality = quality_list[0].url
       toast.success('Data obtained', {
@@ -229,6 +230,9 @@
         duration: 2000,
         position: 'bottom-right'
       })
+      setTimeout(() => {
+          getdata = false
+      }, 1500);
     }
   }
 

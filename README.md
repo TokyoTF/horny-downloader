@@ -104,7 +104,7 @@ export default class NewSiteExtension extends Extension {
 - ThumbZilla
 - PornOne
 - Beeg
-- Eporner (in development)
+- Eporner
 
 ## 🛠️ Installation for dev
 

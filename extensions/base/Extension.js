@@ -58,10 +58,11 @@ export default class Extension {
   /**
    * Format video duration
    * @param {number} seconds - Duration in seconds
+   * @param {string} format - Format of time
    * @returns {string} Formatted time string
    */
-  formatDuration(seconds) {
-    return this.tool.secondsToTime(seconds)
+  formatDuration(seconds,format) {
+    return this.tool.secondsToTime(seconds,format)
   }
 
   /**

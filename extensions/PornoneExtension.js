@@ -6,7 +6,7 @@ export default class PornoneExtension extends Extension {
     super({
       domains_support: ['pornone.com'],
       domains_includes: ['/'],
-      embed_preview: '',
+      embed_preview: 'embed',
       prefix_url: 'pornone.com',
       referer: false,
       format_support: ['hls'],
@@ -23,6 +23,11 @@ export default class PornoneExtension extends Extension {
       headers: this.getDefaultHeaders()
     })
 
+    const extractVideoId = (url) => {
+      const parts = url.split('/');
+      return parts.filter(Boolean).pop();
+    }
+
     const view = await req.text()
     const $ = load(view)
 
@@ -38,9 +43,9 @@ export default class PornoneExtension extends Extension {
         url: $(element).attr('src')
       })
     })
-
+  
     return this.createResponse({
-      embed: '',
+      embed: `https://${this.config.prefix_url}/${this.config.embed_preview}/${extractVideoId(url)}`,
       video_test: list_quality[0]?.url || '',
       list_quality: list_quality,
       title: video_title,
