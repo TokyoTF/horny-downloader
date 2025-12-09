@@ -1,13 +1,19 @@
 import { app, shell, BrowserWindow, ipcMain, session, dialog } from 'electron'
 import path from 'path'
-import ExtensionRegistry from '../../extensions/ExtensionRegistry.js'
+import ExtensionRegistry from '../../lib/ExtensionRegistry.js'
 import { is, optimizer} from '@electron-toolkit/utils'
 import sqlite3 from 'sqlite3'
-import { existsSync, mkdirSync, writeFile, unlinkSync, statSync } from 'fs'
-const sql = sqlite3.verbose()
-const db = new sql.Database('./data.db')
+import { existsSync, mkdirSync, writeFile, unlinkSync, statSync, cpSync } from 'fs'
 import { setupAutoUpdater } from './autoUpdater'
 import { randomUUID } from 'crypto'
+
+const documentsPath = app.getPath('documents')
+
+if (!existsSync(path.join(documentsPath, 'horny-downloader'))) {
+  mkdirSync(path.join(documentsPath, 'horny-downloader'))
+}
+const sql = sqlite3.verbose()
+const db = new sql.Database(path.join(documentsPath,'horny-downloader', 'data.db'))
 
 const extensionRegistry = new ExtensionRegistry()
 import ffmpeg from 'fluent-ffmpeg'
@@ -102,7 +108,7 @@ function enqueueDownload(job) {
 }
 
 async function downloadthumb(url, namefile, site) {
-  const dest = path.join('./temp', namefile)
+  const dest = path.join(documentsPath, 'horny-downloader', 'temp', namefile)
   const response = await fetch(url)
   const buffer = await response.arrayBuffer()
 
@@ -135,6 +141,18 @@ ipcMain.on('revealFile', (e, v) => {
     shell.showItemInFolder(p)
   } catch (err) {
     console.error('revealFile error:', err)
+  }
+})
+
+ipcMain.on('openExtensionsFolder', (e) => {
+  try {
+    const extPath = path.join(documentsPath, 'horny-downloader', 'extensions')
+    if (!existsSync(extPath)) {
+      mkdirSync(extPath, { recursive: true })
+    }
+    shell.openPath(extPath)
+  } catch (err) {
+    console.error('openExtensionsFolder error:', err)
   }
 })
 
@@ -188,7 +206,7 @@ async function startJob(job) {
   if (local_settings.namefile_type == 'video_title') {
     namefile = title.replace(/[^\w\s]/gi, '')
 
-    const downloadDir = local_settings.download_folder || path.join(process.cwd(), 'downloads')
+    const downloadDir = local_settings.download_folder || path.join(documentsPath, 'horny-downloader', 'downloads')
     if (!existsSync(downloadDir)) {
       mkdirSync(downloadDir, { recursive: true })
     }
@@ -206,7 +224,7 @@ async function startJob(job) {
     }
   } else {
     namefile = randomUUID()
-    const downloadDir = local_settings.download_folder || path.join(process.cwd(), 'downloads')
+    const downloadDir = local_settings.download_folder || path.join(documentsPath, 'horny-downloader', 'downloads')
     if (!existsSync(downloadDir)) {
       mkdirSync(downloadDir, { recursive: true })
     }
@@ -222,7 +240,7 @@ async function startJob(job) {
         title,
         url,
         1,
-        thumb ? path.join(process.cwd(), 'temp', namethumb) : path.join(process.cwd(), 'temp', 'thumb.jpg'),
+        thumb ? path.join(documentsPath, 'horny-downloader', 'temp', namethumb) : path.join(documentsPath, 'horny-downloader', 'temp', 'thumb.jpg'),
         site,
         format,
         toSeconds(duration),
@@ -331,16 +349,31 @@ function createWindow() {
     }
   })
 
-  if (!existsSync('./temp')) {
-    mkdirSync('./temp')
+  
+
+  if (!existsSync(path.join(documentsPath, 'horny-downloader', 'temp'))) {
+    mkdirSync(path.join(documentsPath, 'horny-downloader', 'temp'))
   }
 
-  if (!existsSync('./extensions')) {
-    mkdirSync('./extensions')
+  if (!existsSync(path.join(documentsPath, 'horny-downloader', 'extensions'))) {
+    mkdirSync(path.join(documentsPath, 'horny-downloader', 'extensions'))
   }
 
-  if (!existsSync('./downloads')) {
-    mkdirSync('./downloads')
+  if (is.dev) {
+    try {
+      const srcExt = path.join(process.cwd(), 'extensions')
+      const destExt = path.join(documentsPath, 'horny-downloader', 'extensions')
+      if (existsSync(srcExt)) {
+        cpSync(srcExt, destExt, { recursive: true, force: true })
+        console.log('Extensions copied to Documents folder')
+      }
+    } catch (err) {
+      console.error('Error copying extensions:', err)
+    }
+  }
+
+  if (!existsSync(path.join(documentsPath, 'horny-downloader', 'downloads'))) {
+    mkdirSync(path.join(documentsPath, 'horny-downloader', 'downloads'))
   }
 
   db.serialize(() => {

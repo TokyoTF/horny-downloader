@@ -1,10 +1,6 @@
-import Extension from './base/Extension.js'
-import fetchCookie from 'fetch-cookie'
-import fetch from 'node-fetch'
-
-export default class PornhubExtension extends Extension {
-  constructor() {
-    super({
+export default class PornhubExtension {
+  constructor(ExtensionExtra) {
+    this.config = {
       domains_support: ['pornhub.com','es.pornhub.com'],
       domains_includes: ['/embed/', 'viewkey='],
       embed_preview: 'embed',
@@ -12,21 +8,23 @@ export default class PornhubExtension extends Extension {
       referer: false,
       format_support: ['hls', 'mp4'],
       vtt_support: false,
-      quality_support: ['1080', '720', '480', '240']
-    })
+      quality_support: ['1080', '720', '480', '240'],
+      version: '1.0.0'
+    }
+    this.extension = new ExtensionExtra(this.config)
 
-    this.fetchWithCookies = fetchCookie(fetch)
+    this.fetchWithCookies = this.extension.fetchCookie
   }
 
   async extract(url) {
     let list_quality = []
 
-    const videoId = this.extractVideoId(url)
+    const videoId = this.extension.extractVideoId(url)
     const req = await this.fetchWithCookies(
       `https://${this.config.prefix_url}/view_video.php?viewkey=${videoId}`,
       {
         redirect: 'follow',
-        headers: this.getDefaultHeaders()
+        headers: this.extension.getDefaultHeaders()
       }
     )
 
@@ -43,12 +41,12 @@ export default class PornhubExtension extends Extension {
       if (n.format == 'hls') list_quality.push({ quality: n.quality, url: n.videoUrl })
     })
 
-    return this.createResponse({
+    return this.extension.createResponse({
       embed: `https://${this.config.prefix_url}/${this.config.embed_preview}/${videoId}`,
       video_test: view_data.mediaDefinitions[0].videoUrl,
       list_quality,
       title: view_data.video_title,
-      time: this.formatDuration(view_data.video_duration),
+      time: this.extension.formatDuration(view_data.video_duration),
       thumb: view_data.image_url,
       status: req.status
     })
