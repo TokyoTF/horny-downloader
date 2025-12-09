@@ -144,6 +144,18 @@ ipcMain.on('revealFile', (e, v) => {
   }
 })
 
+ipcMain.on('openExtensionsFolder', (e) => {
+  try {
+    const extPath = path.join(documentsPath, 'horny-downloader', 'extensions')
+    if (!existsSync(extPath)) {
+      mkdirSync(extPath, { recursive: true })
+    }
+    shell.openPath(extPath)
+  } catch (err) {
+    console.error('openExtensionsFolder error:', err)
+  }
+})
+
 
 ipcMain.on('cancelDownload', (e, { id }) => {
   try {

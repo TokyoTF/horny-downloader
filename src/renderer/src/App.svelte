@@ -836,9 +836,19 @@
 
             <!-- Extensions Status Section -->
             <div class="space-y-4">
-              <h3 class="text-sm font-medium text-gray-300 uppercase tracking-wider">
-                Extensions Status ({Object.keys(extensions_status.loaded || {}).length} loaded, {extensions_status.total || 0} total)
-              </h3>
+              <div class="flex items-center justify-between">
+                <h3 class="text-sm font-medium text-gray-300 uppercase tracking-wider">
+                  Extensions Status ({Object.keys(extensions_status.loaded || {}).length} loaded, {extensions_status.total || 0} total)
+                </h3>
+                  <button 
+                  onclick={() => window.electron.ipcRenderer.send('openExtensionsFolder')} 
+                  class="text-xs text-[#FF9027] hover:text-[#FF6B00] font-medium flex items-center gap-1.5 transition-colors px-2 py-1 rounded hover:bg-[#FF9027]/10"
+                  title="Open Extensions Folder"
+                >
+                  <FolderIcon size={14} /> 
+                  Open Folder
+                </button>
+              </div>
               <div class="space-y-3">
                 {#each Object.entries(extensions_status.loaded || {}) as [name, info]}
                   <div class="flex items-center justify-between p-3 bg-[#252525] rounded-lg border border-[#3a3a3a]">
