@@ -1,9 +1,6 @@
-import Extension from './base/Extension.js'
-import { load } from 'cheerio'
-
-export default class PornoneExtension extends Extension {
-  constructor() {
-    super({
+export default class PornoneExtension {
+  constructor(ExtensionExtra) {
+    this.config = {
       domains_support: ['pornone.com'],
       domains_includes: ['/'],
       embed_preview: 'embed',
@@ -11,16 +8,18 @@ export default class PornoneExtension extends Extension {
       referer: false,
       format_support: ['hls'],
       vtt_support: false,
-      quality_support: ['4k', '1080', '720', '540', '360', '270']
-    })
+      quality_support: ['4k', '1080', '720', '540', '360', '270'],
+      version: '1.0.0'
+    }
+    this.extension = new ExtensionExtra(this.config)
   }
 
   async extract(url) {
     let list_quality = []
 
-    const videoId = this.extractVideoId(url)
+    const videoId = this.extension.extractVideoId(url)
     const req = await fetch(`https://${this.config.prefix_url}/${videoId}`, {
-      headers: this.getDefaultHeaders()
+      headers: this.extension.getDefaultHeaders()
     })
 
     const extractVideoId = (url) => {
@@ -29,13 +28,13 @@ export default class PornoneExtension extends Extension {
     }
 
     const view = await req.text()
-    const $ = load(view)
+    const $ = this.extension.cherrio(view)
 
     const data = JSON.parse($('script[data-react-helmet="true"][type="application/ld+json"]').text())
 
     const video_title = data.name
     const video_thumb = data.thumbnailUrl[0]
-    const video_time = this.formatDuration(data.duration.replace('P0DT', 'PT'), 'pt')
+    const video_time = this.extension.formatDuration(data.duration.replace('P0DT', 'PT'), 'pt')
 
     $('#pornone-video-player source').each((_, element) => {
       list_quality.push({
@@ -44,7 +43,7 @@ export default class PornoneExtension extends Extension {
       })
     })
   
-    return this.createResponse({
+    return this.extension.createResponse({
       embed: `https://${this.config.prefix_url}/${this.config.embed_preview}/${extractVideoId(url)}`,
       video_test: list_quality[0]?.url || '',
       list_quality: list_quality,

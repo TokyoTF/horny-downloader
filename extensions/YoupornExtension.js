@@ -1,9 +1,6 @@
-import Extension from './base/Extension.js'
-import { load } from 'cheerio'
-
-export default class YoupornExtension extends Extension {
-  constructor() {
-    super({
+export default class YoupornExtension {
+  constructor(ExtensionExtra) {
+    this.config = {
       domains_support: ['youporn.com', 'www.youporn.com'],
       domains_includes: ['/embed/', '/watch/'],
       embed_preview: 'embed',
@@ -11,28 +8,30 @@ export default class YoupornExtension extends Extension {
       referer: false,
       format_support: ['hls', 'mp4'],
       vtt_support: false,
-      quality_support: ['1080', '720', '480', '360', '240']
-    })
+      quality_support: ['1080', '720', '480', '360', '240'],
+      version: '1.0.0'
+    }
+    this.extension = new ExtensionExtra(this.config)
   }
 
   async extract(url) {
     let list_quality = []
 
-    const videoId = this.extractVideoId(url)
+    const videoId = this.extension.extractVideoId(url)
     const videoUrl = `https://${this.config.prefix_url}/watch/${videoId}`
 
     const req = await fetch(videoUrl, {
-      headers: this.getDefaultHeaders({
+      headers: this.extension.getDefaultHeaders({
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36'
       })
     })
 
     const view = await req.text()
-    const $ = load(view)
+    const $ = this.extension.cherrio(view)
 
     const title_video = $('meta[property="og:title"]').attr('content') || $('title').text()
     const thumb_video = $('meta[property="og:image"]').attr('content') || ''
-    const time_video = this.formatDuration(
+    const time_video = this.extension.formatDuration(
       parseInt($('meta[property="video:duration"]').attr('content'))
     )
 
@@ -77,7 +76,7 @@ export default class YoupornExtension extends Extension {
 
     const video_test = list_quality.length ? list_quality[0].url : ''
 
-    return this.createResponse({
+    return this.extension.createResponse({
       embed: `https://${this.config.prefix_url}/embed/${videoId}`,
       video_test,
       list_quality,

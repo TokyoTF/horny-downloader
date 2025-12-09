@@ -1,9 +1,6 @@
-import Extension from './base/Extension.js'
-import { load } from 'cheerio'
-
-export default class XnxxExtension extends Extension {
-  constructor() {
-    super({
+export default class XnxxExtension {
+  constructor(ExtensionExtra) {
+    this.config = {
       domains_support: ['xnxx.com', 'xnxx.es'],
       domains_includes: ['/video-', '/embedframe/'],
       embed_preview: 'embedframe',
@@ -11,26 +8,28 @@ export default class XnxxExtension extends Extension {
       referer: false,
       format_support: ['hls'],
       vtt_support: false,
-      quality_support: ['1080', '720', '692', '480', '360', '250']
-    })
+      quality_support: ['1080', '720', '692', '480', '360', '250'],
+      version: '1.0.0'
+    }
+    this.extension = new ExtensionExtra(this.config)
   }
 
   async extract(url) {
     let list_quality = []
 
-    const videoId = this.extractVideoId(url)
+    const videoId = this.extension.extractVideoId(url)
     const req = await fetch(`https://${this.config.prefix_url}/video-${videoId}`, {
-      headers: this.getDefaultHeaders({
+      headers: this.extension.getDefaultHeaders({
         'User-Agent': 'Mozilla/5.0 (compatible; MSIE 8.0; Windows; U; Windows NT 6.1; Win64; x64 Trident/4.0)'
       })
     })
 
     const view = await req.text()
-    const $ = load(view)
+    const $ = this.extension.cherrio(view)
 
     const title_video = $('.video-title-container .video-title strong').text()
     const thumb_video = $('meta[property="og:image"]').attr('content')
-    const time_video = this.formatDuration(
+    const time_video = this.extension.formatDuration(
       parseInt($('meta[property="og:duration"]').attr('content'))
     )
 
@@ -45,14 +44,14 @@ export default class XnxxExtension extends Extension {
     const view_data = Function(`'use strict'; return (${view_format})`)()
     const res_req = await (await fetch(view_data)).text()
 
-    const res = await this.parseResolutions(
+    const res = await this.extension.parseResolutions(
       res_req,
       view_data.replace('hls.m3u8', '')
     )
 
     list_quality = res
 
-    return this.createResponse({
+    return this.extension.createResponse({
       embed: '',
       video_test: view_data,
       list_quality,

@@ -1,11 +1,6 @@
-import Extension from './base/Extension.js'
-import { load } from 'cheerio'
-import fetchCookie from 'fetch-cookie'
-import fetch from 'node-fetch'
-
-export default class SpankbangExtension extends Extension {
-  constructor() {
-    super({
+export default class SpankbangExtension {
+  constructor(ExtensionExtra) {
+    this.config = {
       domains_support: ['spankbang.com','la.spankbang.com'],
       domains_includes: ['/embed', '/'],
       embed_preview: 'embed',
@@ -13,17 +8,19 @@ export default class SpankbangExtension extends Extension {
       referer: true,
       format_support: ['hls', 'mp4'],
       vtt_support: false,
-      quality_support: ['4k', '1080', '720', '480', '240']
-    })
+      quality_support: ['4k', '1080', '720', '480', '240'],
+      version: '1.0.0'
+    }
+    this.extension = new ExtensionExtra(this.config)
 
-    this.fetchWithCookies = fetchCookie(fetch)
+    this.fetchWithCookies = this.extension.fetchCookie
   }
 
   async extract(url) {
     let list_quality = []
     let view_data = {}
 
-    const videoId = this.extractVideoId(url, true)
+    const videoId = this.extension.extractVideoId(url, true)
     const req = await this.fetchWithCookies(`https://${this.config.prefix_url}/${videoId}`, {
       headers:  {
         'User-Agent':'Mozilla/5.0 (compatible; MSIE 8.0; Windows; U; Windows NT 6.1; Win64; x64 Trident/4.0)'
@@ -31,11 +28,11 @@ export default class SpankbangExtension extends Extension {
     })
    
     const view = await req.text()
-    const $ = load(view)
+    const $ = this.extension.cherrio(view)
 
     const title_video = $('.main_content_title').attr('title')
     const durationMeta = $('meta[property="og:video:duration"]').attr('content') || $('meta[property="og:duration"]').attr('content')
-    const time_video = durationMeta ? this.formatDuration(parseInt(durationMeta)) : ''
+    const time_video = durationMeta ? this.extension.formatDuration(parseInt(durationMeta)) : ''
 
     const view_format = view
       .slice(
@@ -55,7 +52,7 @@ export default class SpankbangExtension extends Extension {
       }
     })
 
-    return this.createResponse({
+    return this.extension.createResponse({
       embed: `https://${this.config.prefix_url}/${videoId}/${this.config.embed_preview}`,
       video_test: view_data.m3u8[0],
       list_quality,

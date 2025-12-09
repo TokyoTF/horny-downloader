@@ -51,18 +51,15 @@ You can easily add new extensions by downloading them from GitHub and placing th
 
 Extension files must:
 - Be named with `Extension.js` suffix (e.g., `NewSiteExtension.js`)
-- Extend the base `Extension` class
 - Export a default class
 - Include proper configuration in the constructor
 
 #### Example Extension Structure
 
 ```javascript
-import Extension from './base/Extension.js'
-
-export default class NewSiteExtension extends Extension {
-  constructor() {
-    super({
+export default class NewSiteExtension {
+  constructor(ExtensionExtra) {
+    this.config = {
       domains_support: ['example.com'],
       domains_includes: ['/video/', '/watch/'],
       embed_preview: 'embed',
@@ -70,13 +67,15 @@ export default class NewSiteExtension extends Extension {
       referer: false,
       format_support: ['mp4'],
       vtt_support: false,
-      quality_support: ['1080', '720', '480']
-    })
+      quality_support: ['1080', '720', '480'],
+      version:'1.0.0'
+    }
+    this.extension = new ExtensionExtra(this.config)
   }
 
   async extract(url) {
     // Your extraction logic here
-    return this.createResponse({
+    return this.extension.createResponse({
       embed: 'https://example.com/embed/video123',
       video_test: 'https://example.com/video.mp4',
       list_quality: [
