@@ -71,7 +71,7 @@ export default class EpornerExtension extends Extension {
     const res = await this.parseResolutions(req_video_result, '', { part_special: true })
 
     return this.createResponse({
-      embed: `https://www.eporner.com/embed/${videoIdClean}/`,
+      embed: `https://${this.config.prefix_url}/${this.config.embed_preview}/${videoIdClean}`,
       video_test,
       list_quality: res,
       title: title,

@@ -354,6 +354,11 @@ function createWindow() {
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()
   })
+
+  mainWindow.webContents.setWindowOpenHandler(() => {
+    return { action: 'deny' }
+  })
+
   let localpos = { x: 0, y: 0 }
   ipcMain.on('setState', (e, v) => {
     v == 'min' && !mainWindow.isMinimized() && mainWindow.minimize()
