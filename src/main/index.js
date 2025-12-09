@@ -295,55 +295,39 @@ function createWindow() {
   const BoundsWin = mainWindow.getBounds()
 
   const filter = {
-    urls: ['https://*.phncdn.com/*']
+    urls: [
+      'https://*.phncdn.com/*',
+      'https://*.externulls.com/*',
+      'https://*.ahcdn.com/*',
+      'https://*.eporner.com/*',
+      'http://*.eporner.com/*',
+      'https://*.spankbang.com/*',
+      'https://*.pornone.com/*'
+    ]
   }
 
-  const filter2 = {
-    urls: ['https://*.externulls.com/*', 'https://*.ahcdn.com/*']
-  }
-
-  const filter3 = {
-    urls: ['https://*.eporner.com/*', 'http://*.eporner.com/*']
-  }
-
-  const filter4 = {
-    urls: ['https://*.spankbang.com/*']
-  }
-
-  session.defaultSession.webRequest.onBeforeRequest(filter, (details, callback) => {
+  session.defaultSession.webRequest.onBeforeSendHeaders(filter, (details, callback) => {
     if (details && details.requestHeaders) {
       details.requestHeaders['Access-Control-Allow-Origin'] = '*'
-      details.requestHeaders['Referer'] = 'https://www.pornhub.com/'
       details.requestHeaders['Origin'] = ''
-    }
+      details.requestHeaders['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
 
-    callback({ requestHeaders: details.requestHeaders })
-  })
+      const { url } = details
 
-  session.defaultSession.webRequest.onBeforeSendHeaders(filter2, (details, callback) => {
-    if (details && details.requestHeaders) {
-      details.requestHeaders['Access-Control-Allow-Origin'] = '*'
-      details.requestHeaders['Referer'] = 'https://beeg.com/'
-      details.requestHeaders['Origin'] = ''
+      if (url.includes('phncdn.com')) {
+        details.requestHeaders['Referer'] = 'https://www.pornhub.com/'
+      } else if (url.includes('externulls.com') || url.includes('ahcdn.com')) {
+        details.requestHeaders['Referer'] = 'https://beeg.com/'
+      } else if (url.includes('eporner.com')) {
+        details.requestHeaders['Referer'] = 'https://www.eporner.com/'
+      } else if (url.includes('spankbang.com')) {
+        details.requestHeaders['Referer'] = 'https://spankbang.com/'
+      }else if (url.includes('pornone.com')) {
+        details.requestHeaders['Referer'] = 'https://pornone.com/'
+      }
       callback({ requestHeaders: details.requestHeaders })
-    }
-  })
-
-  session.defaultSession.webRequest.onBeforeSendHeaders(filter3, (details, callback) => {
-    if (details && details.requestHeaders) {
-      details.requestHeaders['Access-Control-Allow-Origin'] = '*'
-      details.requestHeaders['Referer'] = 'https://www.eporner.com/'
-      details.requestHeaders['Origin'] = ''
-      callback({ requestHeaders: details.requestHeaders })
-    }
-  })
-
-  session.defaultSession.webRequest.onBeforeSendHeaders(filter4, (details, callback) => {
-    if (details && details.requestHeaders) {
-      details.requestHeaders['Access-Control-Allow-Origin'] = '*'
-      details.requestHeaders['Referer'] = 'https://spankbang.com/'
-      details.requestHeaders['Origin'] = ''
-      callback({ requestHeaders: details.requestHeaders })
+    } else {
+      callback({ cancel: false })
     }
   })
 
