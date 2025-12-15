@@ -12,15 +12,14 @@ export default class PornhubExtension {
       version: '1.0.0'
     }
     this.extension = new ExtensionExtra(this.config)
-
-    this.fetchWithCookies = this.extension.fetchCookie
+    this.fetchcookie = this.extension.fetchcookies()
   }
 
   async extract(url) {
     let list_quality = []
 
     const videoId = this.extension.extractVideoId(url)
-    const req = await this.fetchWithCookies(
+    const req = await this.fetchcookie(
       `https://${this.config.prefix_url}/view_video.php?viewkey=${videoId}`,
       {
         redirect: 'follow',
