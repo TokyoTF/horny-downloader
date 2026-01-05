@@ -103,7 +103,53 @@ const downloadQueue = []
 let activeDownloads = 0
 let mainWindow = null
 
-function enqueueDownload(job) {
+async function enqueueDownload(job) {
+  const namethumb = randomUUID() + '.jpg'
+  let thumbPath = job.thumb
+
+  if (job.thumb && job.thumb.startsWith('http')) {
+    try {
+      await downloadthumb(job.thumb, namethumb, job.site)
+      thumbPath = path.join(documentsPath, 'horny-downloader', 'temp', namethumb)
+    } catch (err) {
+      console.error('Failed to download thumb in enqueue:', err)
+      thumbPath = path.join(documentsPath, 'horny-downloader', 'temp', 'thumb.jpg')
+    }
+  }
+  job.thumb = thumbPath
+
+  await new Promise((resolve) => {
+    const smt = db.prepare('INSERT INTO history (title,url,status,thumb,site,formatfile,timevideo,quality,tempid) VALUES (?,?,?,?,?,?,?,?,?)')
+
+    smt.run(
+      [
+        job.title,
+        job.url,
+        0,
+        thumbPath,
+        job.site,
+        job.format,
+        toSeconds(job.duration),
+        job.quality,
+        job.tempid
+      ],
+      function () {
+        job.localid = this.lastID
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          setTimeout(() => {
+            db.all('SELECT id,title,thumb,status,site,url,pathfile,created_at,formatfile as format,timevideo as duration, filesize,quality,tempid from history', (err, row) => {
+              if (row && row.length > 0) {
+                mainWindow.webContents.send('getList', row)
+              }
+            })
+          }, 100)
+        }
+        resolve()
+      }
+    )
+    smt.finalize()
+  })
+
   downloadQueue.push(job)
   startNextDownload()
 }
@@ -240,15 +286,7 @@ ipcMain.on('updateSettings', (e, data) => {
 
 
 async function startJob(job) {
-  const { title, format, thumb, site, url, video_src, tempid, duration, quality } = job
-
- 
-  const namethumb = randomUUID() + '.jpg'
-  let localid = null
-
-  if (thumb) {
-    downloadthumb(thumb, namethumb, site)
-  }
+  const { title, format, thumb, site, url, video_src, tempid, duration, quality, localid } = job
 
   let namefile = ''
   let outPath = ''
@@ -282,41 +320,21 @@ async function startJob(job) {
     
   }
 
+  activeJobs[tempid] = { cmd: null, localid, outPath }
+  
   await new Promise((resolve) => {
-    const smt = db.prepare('INSERT INTO history (title,url,status,thumb,site,formatfile,timevideo,quality) VALUES (?,?,?,?,?,?,?,?)')
-
-    smt.run(
-      [
-        title,
-        url,
-        1,
-        thumb ? path.join(documentsPath, 'horny-downloader', 'temp', namethumb) : path.join(documentsPath, 'horny-downloader', 'temp', 'thumb.jpg'),
-        site,
-        format,
-        toSeconds(duration),
-        quality
-      ],
-      function () {
-        localid = this.lastID
-        if (outPath && localid !== null) {
-          db.run('UPDATE history SET pathfile=? WHERE id=?', [outPath, localid])
-        }
-        activeJobs[tempid] = { cmd: null, localid, outPath }
-      
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          setTimeout(() => {
-            db.all('SELECT id,title,thumb,status,site,url,pathfile,created_at,formatfile as format,timevideo as duration, filesize,quality from history', (err, row) => {
-              if (row && row.length > 0) {
-                mainWindow.webContents.send('getList', row)
-              }
-            })
-          }, 100)
-        }
-        
-        resolve()
+    db.run('UPDATE history SET status=1, pathfile=? WHERE id=?', [outPath, localid], () => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        setTimeout(() => {
+          db.all('SELECT id,title,thumb,status,site,url,pathfile,created_at,formatfile as format,timevideo as duration, filesize,quality,tempid from history', (err, row) => {
+            if (row && row.length > 0) {
+              mainWindow.webContents.send('getList', row)
+            }
+          })
+        }, 100)
       }
-    )
-    smt.finalize()
+      resolve()
+    })
   })
 
   try {
@@ -353,7 +371,7 @@ async function startJob(job) {
           mainWindow.webContents.send('getCheck', { status: 2, id: localid, pathfile: outPath, filesize: fileSizeInBytes })
           setTimeout(() => {
             if (mainWindow && !mainWindow.isDestroyed()) {
-              db.all('SELECT id,title,thumb,status,site,url,pathfile,created_at,formatfile as format,timevideo as duration, filesize,quality from history', (err, row) => {
+              db.all('SELECT id,title,thumb,status,site,url,pathfile,created_at,formatfile as format,timevideo as duration, filesize,quality,tempid from history', (err, row) => {
                 if (row && row.length > 0) {
                   mainWindow.webContents.send('getList', row)
                 }
@@ -371,7 +389,7 @@ async function startJob(job) {
           mainWindow.webContents.send('getCheck', { status: 3, id: localid })
           setTimeout(() => {
             if (mainWindow && !mainWindow.isDestroyed()) {
-              db.all('SELECT id,title,thumb,status,site,url,pathfile,created_at,formatfile as format,timevideo as duration, filesize,quality from history', (err, row) => {
+              db.all('SELECT id,title,thumb,status,site,url,pathfile,created_at,formatfile as format,timevideo as duration, filesize,quality,tempid from history', (err, row) => {
                 if (row && row.length > 0) {
                   mainWindow.webContents.send('getList', row)
                 }
@@ -484,11 +502,17 @@ function createWindow() {
   }
 
   db.serialize(() => {
-    db.prepare(
-      'CREATE TABLE IF NOT EXISTS history (id INTEGER NOT NULL Primary Key AUTOINCREMENT, title varchar(255),status int(11), url varchar(255), thumb varchar(255), pathfile varchar(255), formatfile varchar(255), timevideo varchar(20), site varchar(40), quality varchar(40), filesize varchat(255), created_at datetime DEFAULT CURRENT_TIMESTAMP)'
+    db.run(
+      'CREATE TABLE IF NOT EXISTS history (id INTEGER NOT NULL Primary Key AUTOINCREMENT, title varchar(255),status int(11), url varchar(255), thumb varchar(255), pathfile varchar(255), formatfile varchar(255), timevideo varchar(20), site varchar(40), quality varchar(40), filesize varchat(255), created_at datetime DEFAULT CURRENT_TIMESTAMP, tempid varchar(255))',
+      () => {
+        // Add tempid column if it doesn't exist (for existing databases)
+        db.all("PRAGMA table_info(history)", (err, rows) => {
+          if (rows && !rows.find(row => row.name === 'tempid')) {
+            db.run('ALTER TABLE history ADD COLUMN tempid varchar(255)');
+          }
+        });
+      }
     )
-      .run()
-      .finalize()
   })
 
   mainWindow.on('ready-to-show', () => {
@@ -546,7 +570,7 @@ app.whenReady().then(async () => {
   })
 
   ipcMain.on('getList', (e) => {
-    db.all('SELECT id,title,thumb,status,site,url,pathfile,created_at,formatfile as format,timevideo as duration, filesize,quality from history', (err, row) => {
+    db.all('SELECT id,title,thumb,status,site,url,pathfile,created_at,formatfile as format,timevideo as duration, filesize,quality,tempid from history', (err, row) => {
       if (row && row.length > 0) {
         e.reply('getList', row)
       }
@@ -685,7 +709,7 @@ app.whenReady().then(async () => {
              quality: bestQualityLabel
            }
            
-           enqueueDownload(job)
+           await enqueueDownload(job)
         }
         
       } catch (err) {
@@ -695,12 +719,12 @@ app.whenReady().then(async () => {
   }
 
 
-  ipcMain.on('getCheck', (e, v) => {
+  ipcMain.on('getCheck', async (e, v) => {
     const { title, format, thumb, site, url, video_src, tempid, duration, quality } = v
 
     if (title && format && site && url && video_src) {
       
-      enqueueDownload({ title, format, thumb, site, url, video_src, tempid, duration, quality })
+      await enqueueDownload({ title, format, thumb, site, url, video_src, tempid, duration, quality })
     }
   })
 

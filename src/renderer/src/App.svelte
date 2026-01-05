@@ -42,7 +42,6 @@
   let site_video = ''
   let url_video = $state('')
   let window_video = $state(false)
-  let progressList = $state(0)
   let extensions_status = $state({})
   let searchQuery = $state('')
   let searchType = $state('title')
@@ -97,7 +96,7 @@
           }
         }
         if (activeTab === 'downloading') {
-          ok = ok && item.status === 1
+          ok = ok && (item.status === 1 || item.status === 0)
         }
         return ok
       })
@@ -179,7 +178,7 @@
   let batchModalOpen = $state(false)
   let batchUrls = $state([])
   let batchQuality = $state('max')
-  let batchDelay = $state(4000) // milliseconds
+  let batchDelay = $state(4000)
 
   onMount(async () => {
     const saved = localStorage.getItem('app_settings')
@@ -214,7 +213,28 @@
   let isInitialLoad = true
   console.time('LoadingList')
   window.electron.ipcRenderer.on('getList', (e, v) => {
-    locallist = v.sort((a, b) => parseCreatedAt(b.created_at) - parseCreatedAt(a.created_at))
+    const newList = v.sort((a, b) => parseCreatedAt(b.created_at) - parseCreatedAt(a.created_at))
+    
+    locallist = newList.map(item => {
+      const existing = locallist.find(it => 
+        (item.id && it.id === item.id) || 
+        (item.tempid && it.tempid === item.tempid) ||
+        (item.url === it.url && item.status === it.status)
+      )
+
+      const thumb = item.thumb
+
+      if (existing) {
+        return {
+          ...existing,
+          ...item,
+          thumb,
+          load: item.status === 1 ? (existing.load ?? 0) : (item.status === 2 ? 100 : 0)
+        }
+      }
+      return { ...item, thumb, load: item.status === 2 ? 100 : 0 }
+    })
+
     if (isInitialLoad) {
       toast.success('The list loaded successfully', {
         icon: '⭐',
@@ -231,6 +251,9 @@
     const idx = locallist.findIndex((it) => it.id === id || it.tempid === id)
     if (idx !== -1) {
       locallist[idx].status = status
+      if (id && !locallist[idx].id) {
+        locallist[idx].id = id
+      }
       if (pathfile) {
         locallist[idx].pathfile = pathfile
       }
@@ -334,6 +357,7 @@
   function startDownload() {
     if (getdata == false) {
       
+      const tempid = crypto.randomUUID()
       const newItem = {
         title: title_video,
         thumb: thumb_video,
@@ -342,11 +366,11 @@
         format: format_video,
         video_test: selected_quality,
         load: 0,
-        tempid: progressList,
+        tempid: tempid,
         duration: toSeconds(time_video),
         quality: quality_list.find((item) => item.url == selected_quality).quality,
         created_at: new Date().toISOString(),
-        status: 1
+        status: 0
       }
 
       activeTab = 'downloading'
@@ -365,12 +389,11 @@
               ? selected_quality.src
               : '',
         format: format_video,
-        tempid: progressList,
+        tempid: tempid,
         duration: time_video,
         quality: quality_list.find((item) => item.url == selected_quality).quality
       })
       url = ''
-      progressList++
       window.document.querySelector('.scroll').scrollTo({ top: 0 })
       toast.success('Starting Download', {
         icon: '😎',
@@ -532,7 +555,6 @@
   async function startBatchProcessing() {
     batchModalOpen = false
     try {
-      // Ensure data is plain JS (not Svelte proxies) for IPC
       const args = JSON.parse(JSON.stringify({
         urls: batchUrls,
         quality: batchQuality,
@@ -1319,7 +1341,8 @@
             >
               <img
                 src={currentDownloading.thumb}
-                alt=""
+                alt={currentDownloading.title}
+                loading="lazy"
                 class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
               />
               {#if currentDownloading.status == 1}
@@ -1423,7 +1446,14 @@
               {/if}
 
               <div class="absolute top-2 left-2">
-                {#if item.status == 1}
+                {#if item.status == 0}
+                  <span
+                    class="px-2 py-0.5 bg-[#2a2a1a] text-[#ecc94b] text-[10px] font-medium rounded-full flex items-center gap-1.5"
+                  >
+                    <span class="w-1.5 h-1.5 bg-[#ecc94b] rounded-full"></span>
+                    Queued
+                  </span>
+                {:else if item.status == 1}
                   <span
                     class="px-2 py-0.5 bg-[#1a2a2a] text-[#4fd1c5] text-[10px] font-medium rounded-full flex items-center gap-1.5"
                   >
