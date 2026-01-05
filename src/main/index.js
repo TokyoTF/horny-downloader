@@ -3,7 +3,7 @@ import path from 'path'
 import ExtensionRegistry from '../../lib/ExtensionRegistry.js'
 import { is, optimizer} from '@electron-toolkit/utils'
 import sqlite3 from 'sqlite3'
-import { existsSync, mkdirSync, writeFile, unlinkSync, statSync, cpSync } from 'fs'
+import { existsSync, mkdirSync, writeFile, unlinkSync, statSync, cpSync, readFileSync } from 'fs'
 import { setupAutoUpdater } from './autoUpdater'
 import { randomUUID } from 'crypto'
 
@@ -101,8 +101,55 @@ let local_settings = {
 
 const downloadQueue = []
 let activeDownloads = 0
+let mainWindow = null
 
-function enqueueDownload(job) {
+async function enqueueDownload(job) {
+  const namethumb = randomUUID() + '.jpg'
+  let thumbPath = job.thumb
+
+  if (job.thumb && job.thumb.startsWith('http')) {
+    try {
+      await downloadthumb(job.thumb, namethumb, job.site)
+      thumbPath = path.join(documentsPath, 'horny-downloader', 'temp', namethumb)
+    } catch (err) {
+      console.error('Failed to download thumb in enqueue:', err)
+      thumbPath = path.join(documentsPath, 'horny-downloader', 'temp', 'thumb.jpg')
+    }
+  }
+  job.thumb = thumbPath
+
+  await new Promise((resolve) => {
+    const smt = db.prepare('INSERT INTO history (title,url,status,thumb,site,formatfile,timevideo,quality,tempid) VALUES (?,?,?,?,?,?,?,?,?)')
+
+    smt.run(
+      [
+        job.title,
+        job.url,
+        0,
+        thumbPath,
+        job.site,
+        job.format,
+        toSeconds(job.duration),
+        job.quality,
+        job.tempid
+      ],
+      function () {
+        job.localid = this.lastID
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          setTimeout(() => {
+            db.all('SELECT id,title,thumb,status,site,url,pathfile,created_at,formatfile as format,timevideo as duration, filesize,quality,tempid from history', (err, row) => {
+              if (row && row.length > 0) {
+                mainWindow.webContents.send('getList', row)
+              }
+            })
+          }, 100)
+        }
+        resolve()
+      }
+    )
+    smt.finalize()
+  })
+
   downloadQueue.push(job)
   startNextDownload()
 }
@@ -124,15 +171,38 @@ async function downloadthumb(url, namefile, site) {
 }
 
 function startNextDownload() {
-  while (activeDownloads < local_settings.concurrent_downloads && downloadQueue.length > 0) {
-    const job = downloadQueue.shift()
-    activeDownloads++
-    startJob(job)
-      .catch(() => { })
-      .finally(() => {
-        activeDownloads--
-        startNextDownload()
-      })
+  if (activeDownloads >= local_settings.concurrent_downloads) {
+    return
+  }
+  if (downloadQueue.length === 0) {
+    return
+  }
+  
+  const job = downloadQueue.shift()
+  
+  if (!job) {
+    return
+  }
+  
+  activeDownloads++
+
+  startJob(job)
+    .catch((err) => { 
+      console.error('Download job failed:', err)
+    })
+    .finally(() => {
+      activeDownloads--
+
+      setTimeout(() => {
+        for (let i = 0; i < local_settings.concurrent_downloads; i++) {
+          if (activeDownloads < local_settings.concurrent_downloads && downloadQueue.length > 0) {
+            startNextDownload()
+          }
+        }
+      }, 10)
+    })
+  if (activeDownloads < local_settings.concurrent_downloads && downloadQueue.length > 0) {
+    setTimeout(() => startNextDownload(), 0)
   }
 }
 ipcMain.on('revealFile', (e, v) => {
@@ -160,23 +230,49 @@ ipcMain.on('openExtensionsFolder', (e) => {
 ipcMain.on('cancelDownload', (e, { id }) => {
   try {
     if (id == null) return
-    const rec = activeJobs[id]
+    let jobKey = id
+    let rec = activeJobs[id]
+    if (!rec) {
+      const foundEntry = Object.entries(activeJobs).find(([key, val]) => val.localid === id)
+      if (foundEntry) {
+        jobKey = foundEntry[0]
+        rec = foundEntry[1]
+      }
+    }
+
     if (rec && rec.cmd) {
       try { rec.cmd.kill('SIGKILL') } catch { }
       try { rec.cmd.kill('SIGTERM') } catch { }
     }
     if (rec && rec.localid != null) {
-      db.run('UPDATE history SET status=? WHERE id=?', [3, rec.localid])
+      db.run('UPDATE history SET status=? WHERE id=?', [3, rec.localid], () => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('getCheck', { status: 3, id: rec.localid })
+          setTimeout(() => {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              db.all('SELECT id,title,thumb,status,site,url,pathfile,created_at,formatfile as format,timevideo as duration, filesize,quality from history', (err, row) => {
+                if (row && row.length > 0) {
+                  mainWindow.webContents.send('getList', row)
+                }
+              })
+            }
+          }, 100)
+        }
+      })
+    } else {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('getCheck', { status: 3, id: id })
+      }
     }
-    setTimeout(() => {
-      if (rec.outPath && existsSync(rec.outPath)) unlinkSync(rec.outPath)
-    }, 2000);
+    if(rec) {
+        setTimeout(() => {
+        if (rec.outPath && existsSync(rec.outPath)) unlinkSync(rec.outPath)
+        }, 2000);
+        delete activeJobs[jobKey]
+    }
 
-    e.reply('getCheck', { status: 3, id })
   } catch (err) {
     console.error('cancelDownload error:', err)
-  } finally {
-    delete activeJobs[id]
   }
 })
 
@@ -190,15 +286,7 @@ ipcMain.on('updateSettings', (e, data) => {
 
 
 async function startJob(job) {
-  const { e, title, format, thumb, site, url, video_src, tempid, duration, quality } = job
-
- 
-  const namethumb = randomUUID() + '.jpg'
-  let localid = null
-
-  if (thumb) {
-    downloadthumb(thumb, namethumb, site)
-  }
+  const { title, format, thumb, site, url, video_src, tempid, duration, quality, localid } = job
 
   let namefile = ''
   let outPath = ''
@@ -211,7 +299,7 @@ async function startJob(job) {
       mkdirSync(downloadDir, { recursive: true })
     }
 
-    let basePath = path.join(downloadDir, namefile)
+    let basePath = path.join(downloadDir, `${namefile}-${site}`)
     let counter = 1
        
     do {
@@ -220,7 +308,7 @@ async function startJob(job) {
     } while (existsSync(outPath) && counter < 1000)
     if (counter >= 1000) {
       namefile = randomUUID()
-      outPath = path.join(downloadDir, `${namefile}.${format}`)
+      outPath = path.join(downloadDir, `${namefile}-${site}.${format}`)
     }
   } else {
     namefile = randomUUID()
@@ -228,34 +316,25 @@ async function startJob(job) {
     if (!existsSync(downloadDir)) {
       mkdirSync(downloadDir, { recursive: true })
     }
-    outPath = path.join(downloadDir, `${namefile}.${format}`)
+    outPath = path.join(downloadDir, `${namefile}-${site}.${format}`)
     
   }
 
+  activeJobs[tempid] = { cmd: null, localid, outPath }
+  
   await new Promise((resolve) => {
-    const smt = db.prepare('INSERT INTO history (title,url,status,thumb,site,formatfile,timevideo,quality) VALUES (?,?,?,?,?,?,?,?)')
-
-    smt.run(
-      [
-        title,
-        url,
-        1,
-        thumb ? path.join(documentsPath, 'horny-downloader', 'temp', namethumb) : path.join(documentsPath, 'horny-downloader', 'temp', 'thumb.jpg'),
-        site,
-        format,
-        toSeconds(duration),
-        quality
-      ],
-      function () {
-        localid = this.lastID
-        if (outPath && localid !== null) {
-          db.run('UPDATE history SET pathfile=? WHERE id=?', [outPath, localid])
-        }
-        activeJobs[tempid] = { cmd: null, localid, outPath }
-        resolve()
+    db.run('UPDATE history SET status=1, pathfile=? WHERE id=?', [outPath, localid], () => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        setTimeout(() => {
+          db.all('SELECT id,title,thumb,status,site,url,pathfile,created_at,formatfile as format,timevideo as duration, filesize,quality,tempid from history', (err, row) => {
+            if (row && row.length > 0) {
+              mainWindow.webContents.send('getList', row)
+            }
+          })
+        }, 100)
       }
-    )
-    smt.finalize()
+      resolve()
+    })
   })
 
   try {
@@ -265,25 +344,65 @@ async function startJob(job) {
       video_src,
       outPath,
       (pct) => {
-        e.reply('getProgress', {
-          id: tempid,
-          load: pct
-        })
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('getProgress', {
+            id: localid || tempid,
+            load: pct
+          })
+        }
       },
       durationSec,
       { mapAudio: true },
       (cmd) => {
-
         if (activeJobs[tempid]) activeJobs[tempid].cmd = cmd
       })
     if (localid !== null) {
-      const stats = statSync(outPath);
-      const fileSizeInBytes = stats.size;
-      db.run('UPDATE history SET status=?, filesize=? WHERE id=?', [2, fileSizeInBytes, localid])
-      e.reply('getCheck', { status: 2, id: tempid, pathfile: outPath, filesize: fileSizeInBytes })
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('getProgress', {
+          id: localid,
+          load: 100
+        })
+      }
+      
+      const stats = statSync(outPath)
+      const fileSizeInBytes = stats.size
+      db.run('UPDATE history SET status=?, filesize=? WHERE id=?', [2, fileSizeInBytes, localid], () => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('getCheck', { status: 2, id: localid, pathfile: outPath, filesize: fileSizeInBytes })
+          setTimeout(() => {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              db.all('SELECT id,title,thumb,status,site,url,pathfile,created_at,formatfile as format,timevideo as duration, filesize,quality,tempid from history', (err, row) => {
+                if (row && row.length > 0) {
+                  mainWindow.webContents.send('getList', row)
+                }
+              })
+            }
+          }, 100)
+        }
+      })
     }
   } catch (err) {
     console.error('Download failed:', err)
+    if (localid !== null) {
+      db.run('UPDATE history SET status=? WHERE id=?', [3, localid], () => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('getCheck', { status: 3, id: localid })
+          setTimeout(() => {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              db.all('SELECT id,title,thumb,status,site,url,pathfile,created_at,formatfile as format,timevideo as duration, filesize,quality,tempid from history', (err, row) => {
+                if (row && row.length > 0) {
+                  mainWindow.webContents.send('getList', row)
+                }
+              })
+            }
+          }, 100)
+        }
+      })
+    } else {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('getCheck', { status: 3, id: tempid })
+      }
+    }
   } finally {
     delete activeJobs[tempid]
   }
@@ -291,7 +410,7 @@ async function startJob(job) {
 function createWindow() {
   let max = false
 
-  const mainWindow = new BrowserWindow({
+  mainWindow = new BrowserWindow({
     width: 750,
     minWidth: 750,
     height: 590,
@@ -320,7 +439,8 @@ function createWindow() {
       'https://*.eporner.com/*',
       'http://*.eporner.com/*',
       'https://*.spankbang.com/*',
-      'https://*.pornone.com/*'
+      'https://*.pornone.com/*',
+      'https://*.sxyprn.com/*'
     ]
   }
 
@@ -342,7 +462,12 @@ function createWindow() {
         details.requestHeaders['Referer'] = 'https://spankbang.com/'
       }else if (url.includes('pornone.com')) {
         details.requestHeaders['Referer'] = 'https://pornone.com/'
+      }else if (url.includes('sxyprn.com')) {
+        details.requestHeaders['Referer'] = 'https://sxyprn.com/'
+        details.requestHeaders['Range'] = 'bytes=0-'
       }
+
+
       callback({ requestHeaders: details.requestHeaders })
     } else {
       callback({ cancel: false })
@@ -377,11 +502,17 @@ function createWindow() {
   }
 
   db.serialize(() => {
-    db.prepare(
-      'CREATE TABLE IF NOT EXISTS history (id INTEGER NOT NULL Primary Key AUTOINCREMENT, title varchar(255),status int(11), url varchar(255), thumb varchar(255), pathfile varchar(255), formatfile varchar(255), timevideo varchar(20), site varchar(40), quality varchar(40), filesize varchat(255), created_at datetime DEFAULT CURRENT_TIMESTAMP)'
+    db.run(
+      'CREATE TABLE IF NOT EXISTS history (id INTEGER NOT NULL Primary Key AUTOINCREMENT, title varchar(255),status int(11), url varchar(255), thumb varchar(255), pathfile varchar(255), formatfile varchar(255), timevideo varchar(20), site varchar(40), quality varchar(40), filesize varchat(255), created_at datetime DEFAULT CURRENT_TIMESTAMP, tempid varchar(255))',
+      () => {
+        // Add tempid column if it doesn't exist (for existing databases)
+        db.all("PRAGMA table_info(history)", (err, rows) => {
+          if (rows && !rows.find(row => row.name === 'tempid')) {
+            db.run('ALTER TABLE history ADD COLUMN tempid varchar(255)');
+          }
+        });
+      }
     )
-      .run()
-      .finalize()
   })
 
   mainWindow.on('ready-to-show', () => {
@@ -439,7 +570,7 @@ app.whenReady().then(async () => {
   })
 
   ipcMain.on('getList', (e) => {
-    db.all('SELECT id,title,thumb,status,site,url,pathfile,created_at,formatfile as format,timevideo as duration, filesize,quality from history', (err, row) => {
+    db.all('SELECT id,title,thumb,status,site,url,pathfile,created_at,formatfile as format,timevideo as duration, filesize,quality,tempid from history', (err, row) => {
       if (row && row.length > 0) {
         e.reply('getList', row)
       }
@@ -484,7 +615,6 @@ app.whenReady().then(async () => {
   ipcMain.handle('get-extensions-status', async () => {
     try {
       const status = await extensionRegistry.getAllExtensionsStatus()
-      console.log('Extension status:', status)
       return status
     } catch (error) {
       console.error('Error getting extensions status:', error)
@@ -501,13 +631,100 @@ app.whenReady().then(async () => {
     }
   })
 
+  ipcMain.handle('pick-batch-file', async (e) => {
+    const { filePaths } = await dialog.showOpenDialog({
+      properties: ['openFile'],
+      filters: [{ name: 'Text Files', extensions: ['txt'] }]
+    })
 
-  ipcMain.on('getCheck', (e, v) => {
+    if (filePaths && filePaths.length > 0) {
+      try {
+        const content = readFileSync(filePaths[0], 'utf-8')
+        const urls = content
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .filter((line) => line.startsWith('http'))
+        
+        return { count: urls.length, urls }
+      } catch (err) {
+        console.error('Error reading batch file:', err)
+        return { error: err.message }
+      }
+    }
+    return { count: 0, urls: [] }
+  })
+
+  ipcMain.handle('start-batch-download', async (e, { urls, quality, delay }) => {
+    processBatchUrls(urls, quality, delay)
+    return { success: true }
+  })
+
+  async function processBatchUrls(urls, qualityPreference, delay) {
+    const registry = new ExtensionRegistry()
+    
+    for (const url of urls) {
+      try {
+        if (delay && delay > 0) {
+          await new Promise((resolve) => setTimeout(resolve, delay))
+        }
+
+        const videoData = await registry.extractVideo(url)
+        
+        let bestQualitySrc = ''
+        let bestQualityLabel = ''
+        
+        if (videoData.list_quality && videoData.list_quality.length > 0) {
+           const sorted = videoData.list_quality.sort((a, b) => parseInt(b.quality) - parseInt(a.quality))
+           let selected = sorted[0]
+
+           if (qualityPreference === 'low') {
+             selected = sorted[sorted.length - 1]
+           } else if (qualityPreference === 'medium') {
+             selected = sorted[Math.floor(sorted.length / 2)]
+           }
+           
+           bestQualitySrc = selected.url || selected.src
+           bestQualityLabel = selected.quality
+        } else {
+           bestQualitySrc = videoData.video_test
+           bestQualityLabel = 'unknown'
+        }
+        
+        if (!bestQualitySrc && typeof videoData.video_test === 'string') {
+           bestQualitySrc = videoData.video_test
+        }
+
+        if (bestQualitySrc) {
+           const title = decodeURIComponent(escape(videoData.title)) || 'Unknown Title'
+           
+           const job = {
+             title: title,
+             thumb: videoData.thumb || '',
+             site: videoData.site || 'unknown',
+             url: url,
+             format: local_settings.default_format || 'mkv',
+             video_src: bestQualitySrc,
+             tempid: randomUUID(),
+             duration: videoData.time || '00:00:00',
+             quality: bestQualityLabel
+           }
+           
+           await enqueueDownload(job)
+        }
+        
+      } catch (err) {
+        console.error(`Failed to process batch url ${url}:`, err)
+      }
+    }
+  }
+
+
+  ipcMain.on('getCheck', async (e, v) => {
     const { title, format, thumb, site, url, video_src, tempid, duration, quality } = v
 
     if (title && format && site && url && video_src) {
       
-      enqueueDownload({ e, title, format, thumb, site, url, video_src, tempid, duration, quality })
+      await enqueueDownload({ title, format, thumb, site, url, video_src, tempid, duration, quality })
     }
   })
 
@@ -518,10 +735,9 @@ app.whenReady().then(async () => {
       const videoData = await registry.extractVideo(v.url)
     
       const videoObject = {
-        id: 1,
         url: v.url,
         site: videoData.site || 'unknown',
-        title: videoData.title || 'Unknown Title',
+        title: decodeURIComponent(escape(videoData.title)) || 'Unknown Title',
         video_test: videoData.video_test || [],
         thumb: videoData.thumb || '',
         list_quality: videoData.list_quality || [],

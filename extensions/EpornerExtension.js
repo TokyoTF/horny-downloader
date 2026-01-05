@@ -25,7 +25,7 @@ export default class EpornerExtension {
     )
     const viewApi = await reqApi.json()
 
-    const title = decodeURIComponent(escape(viewApi.title))
+    const title = viewApi.title
     const thumb = viewApi.default_thumb?.src || ''
     const duration = viewApi.length_sec || 0
     const time_video = this.extension.formatDuration(duration)

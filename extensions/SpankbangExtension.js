@@ -12,8 +12,7 @@ export default class SpankbangExtension {
       version: '1.0.0'
     }
     this.extension = new ExtensionExtra(this.config)
-
-    this.fetchWithCookies = this.extension.fetchCookie
+    this.fetchcookie = this.extension.fetchcookies()
   }
 
   async extract(url) {
@@ -21,12 +20,12 @@ export default class SpankbangExtension {
     let view_data = {}
 
     const videoId = this.extension.extractVideoId(url, true)
-    const req = await this.fetchWithCookies(`https://${this.config.prefix_url}/${videoId}`, {
-      headers:  {
-        'User-Agent':'Mozilla/5.0 (compatible; MSIE 8.0; Windows; U; Windows NT 6.1; Win64; x64 Trident/4.0)'
+    const req = await this.fetchcookie(`https://${this.config.prefix_url}/${videoId}`,{
+      headers:{
+        'User-Agent':'Mozilla/5.0 (compatible; MSIE 10.0; Windows; U; Windows NT 6.1; Win64; x64; en-US Trident/6.0)'
       }
     })
-   
+
     const view = await req.text()
     const $ = this.extension.cherrio(view)
 
@@ -40,7 +39,6 @@ export default class SpankbangExtension {
         view.lastIndexOf('var live_keywords')
       )
       .replace(';', '')
-
     if (req.status == 200) {
       view_data = Function(`'use strict'; return (${view_format})`)()
     }
