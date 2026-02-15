@@ -1,7 +1,7 @@
 import { app, shell, BrowserWindow, ipcMain, session, dialog } from 'electron'
 import path from 'path'
 import ExtensionRegistry from '../../lib/ExtensionRegistry.js'
-import { is, optimizer} from '@electron-toolkit/utils'
+import { is, optimizer } from '@electron-toolkit/utils'
 import sqlite3 from 'sqlite3'
 import { existsSync, mkdirSync, writeFile, unlinkSync, statSync, cpSync, readFileSync } from 'fs'
 import { setupAutoUpdater } from './autoUpdater'
@@ -13,7 +13,7 @@ if (!existsSync(path.join(documentsPath, 'horny-downloader'))) {
   mkdirSync(path.join(documentsPath, 'horny-downloader'))
 }
 const sql = sqlite3.verbose()
-const db = new sql.Database(path.join(documentsPath,'horny-downloader', 'data.db'))
+const db = new sql.Database(path.join(documentsPath, 'horny-downloader', 'data.db'))
 
 const extensionRegistry = new ExtensionRegistry()
 import ffmpeg from 'fluent-ffmpeg'
@@ -107,9 +107,13 @@ async function enqueueDownload(job) {
   const namethumb = randomUUID() + '.jpg'
   let thumbPath = job.thumb
 
-  if (job.thumb && job.thumb.startsWith('http')) {
+  if (job.thumb && job.thumb.startsWith('http') || job.thumb && job.thumb.startsWith('//')) {
     try {
-      await downloadthumb(job.thumb, namethumb, job.site)
+      let thumbUrl = job.thumb
+      if (job.thumb.startsWith('//')) {
+        thumbUrl = 'https:' + job.thumb
+      }
+      await downloadthumb(thumbUrl, namethumb)
       thumbPath = path.join(documentsPath, 'horny-downloader', 'temp', namethumb)
     } catch (err) {
       console.error('Failed to download thumb in enqueue:', err)
@@ -177,17 +181,17 @@ function startNextDownload() {
   if (downloadQueue.length === 0) {
     return
   }
-  
+
   const job = downloadQueue.shift()
-  
+
   if (!job) {
     return
   }
-  
+
   activeDownloads++
 
   startJob(job)
-    .catch((err) => { 
+    .catch((err) => {
       console.error('Download job failed:', err)
     })
     .finally(() => {
@@ -264,11 +268,11 @@ ipcMain.on('cancelDownload', (e, { id }) => {
         mainWindow.webContents.send('getCheck', { status: 3, id: id })
       }
     }
-    if(rec) {
-        setTimeout(() => {
+    if (rec) {
+      setTimeout(() => {
         if (rec.outPath && existsSync(rec.outPath)) unlinkSync(rec.outPath)
-        }, 2000);
-        delete activeJobs[jobKey]
+      }, 2000);
+      delete activeJobs[jobKey]
     }
 
   } catch (err) {
@@ -290,7 +294,7 @@ async function startJob(job) {
 
   let namefile = ''
   let outPath = ''
- 
+
   if (local_settings.namefile_type == 'video_title') {
     namefile = title.replace(/[^\w\s]/gi, '')
 
@@ -301,7 +305,7 @@ async function startJob(job) {
 
     let basePath = path.join(downloadDir, `${namefile}-${site}`)
     let counter = 1
-       
+
     do {
       outPath = `${basePath}${counter > 1 ? ` (${counter})` : ''}.${format}`
       counter++
@@ -317,11 +321,11 @@ async function startJob(job) {
       mkdirSync(downloadDir, { recursive: true })
     }
     outPath = path.join(downloadDir, `${namefile}-${site}.${format}`)
-    
+
   }
 
   activeJobs[tempid] = { cmd: null, localid, outPath }
-  
+
   await new Promise((resolve) => {
     db.run('UPDATE history SET status=1, pathfile=? WHERE id=?', [outPath, localid], () => {
       if (mainWindow && !mainWindow.isDestroyed()) {
@@ -363,7 +367,7 @@ async function startJob(job) {
           load: 100
         })
       }
-      
+
       const stats = statSync(outPath)
       const fileSizeInBytes = stats.size
       db.run('UPDATE history SET status=?, filesize=? WHERE id=?', [2, fileSizeInBytes, localid], () => {
@@ -460,9 +464,9 @@ function createWindow() {
         details.requestHeaders['Referer'] = 'https://www.eporner.com/'
       } else if (url.includes('spankbang.com')) {
         details.requestHeaders['Referer'] = 'https://spankbang.com/'
-      }else if (url.includes('pornone.com')) {
+      } else if (url.includes('pornone.com')) {
         details.requestHeaders['Referer'] = 'https://pornone.com/'
-      }else if (url.includes('sxyprn.com')) {
+      } else if (url.includes('sxyprn.com')) {
         details.requestHeaders['Referer'] = 'https://sxyprn.com/'
         details.requestHeaders['Range'] = 'bytes=0-'
       }
@@ -474,7 +478,7 @@ function createWindow() {
     }
   })
 
-  
+
 
   if (!existsSync(path.join(documentsPath, 'horny-downloader', 'temp'))) {
     mkdirSync(path.join(documentsPath, 'horny-downloader', 'temp'))
@@ -555,11 +559,11 @@ function createWindow() {
   } else {
     mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'))
   }
-  
-  if(!is.dev){
+
+  if (!is.dev) {
     setupAutoUpdater()
   }
- 
+
 }
 
 app.whenReady().then(async () => {
@@ -622,12 +626,56 @@ app.whenReady().then(async () => {
     }
   })
 
+  ipcMain.handle('reload-extensions', async () => {
+    try {
+      await extensionRegistry.reloadExtensions()
+      const status = await extensionRegistry.getAllExtensionsStatus()
+
+
+      if (is.dev) {
+        try {
+          const srcExt = path.join(process.cwd(), 'extensions')
+          const destExt = path.join(documentsPath, 'horny-downloader', 'extensions')
+          if (existsSync(srcExt)) {
+            cpSync(srcExt, destExt, { recursive: true, force: true })
+            console.log('Extensions copied to Documents folder')
+          }
+        } catch (err) {
+          console.error('Error copying extensions:', err)
+        }
+      }
+
+      return status
+    } catch (error) {
+      console.error('Error reloading extensions:', error)
+      return { error: error.message }
+    }
+  })
+
   ipcMain.handle('get-supported-domains', async () => {
     try {
       return await extensionRegistry.getSupportedDomains()
     } catch (error) {
       console.error('Error getting supported domains:', error)
       return []
+    }
+  })
+
+  ipcMain.handle('check-for-extension-updates', async () => {
+    try {
+      return await extensionRegistry.checkForUpdates()
+    } catch (error) {
+      console.error('Error checking for updates:', error)
+      return []
+    }
+  })
+
+  ipcMain.handle('update-extension', async (e, name) => {
+    try {
+      return await extensionRegistry.updateExtension(name)
+    } catch (error) {
+      console.error(`Error updating extension ${name}:`, error)
+      return false
     }
   })
 
@@ -644,7 +692,7 @@ app.whenReady().then(async () => {
           .split(/\r?\n/)
           .map((line) => line.trim())
           .filter((line) => line.startsWith('http'))
-        
+
         return { count: urls.length, urls }
       } catch (err) {
         console.error('Error reading batch file:', err)
@@ -661,7 +709,7 @@ app.whenReady().then(async () => {
 
   async function processBatchUrls(urls, qualityPreference, delay) {
     const registry = new ExtensionRegistry()
-    
+
     for (const url of urls) {
       try {
         if (delay && delay > 0) {
@@ -669,49 +717,49 @@ app.whenReady().then(async () => {
         }
 
         const videoData = await registry.extractVideo(url)
-        
+
         let bestQualitySrc = ''
         let bestQualityLabel = ''
-        
-        if (videoData.list_quality && videoData.list_quality.length > 0) {
-           const sorted = videoData.list_quality.sort((a, b) => parseInt(b.quality) - parseInt(a.quality))
-           let selected = sorted[0]
 
-           if (qualityPreference === 'low') {
-             selected = sorted[sorted.length - 1]
-           } else if (qualityPreference === 'medium') {
-             selected = sorted[Math.floor(sorted.length / 2)]
-           }
-           
-           bestQualitySrc = selected.url || selected.src
-           bestQualityLabel = selected.quality
+        if (videoData.list_quality && videoData.list_quality.length > 0) {
+          const sorted = videoData.list_quality.sort((a, b) => parseInt(b.quality) - parseInt(a.quality))
+          let selected = sorted[0]
+
+          if (qualityPreference === 'low') {
+            selected = sorted[sorted.length - 1]
+          } else if (qualityPreference === 'medium') {
+            selected = sorted[Math.floor(sorted.length / 2)]
+          }
+
+          bestQualitySrc = selected.url || selected.src
+          bestQualityLabel = selected.quality
         } else {
-           bestQualitySrc = videoData.video_test
-           bestQualityLabel = 'unknown'
+          bestQualitySrc = videoData.video_test
+          bestQualityLabel = 'unknown'
         }
-        
+
         if (!bestQualitySrc && typeof videoData.video_test === 'string') {
-           bestQualitySrc = videoData.video_test
+          bestQualitySrc = videoData.video_test
         }
 
         if (bestQualitySrc) {
-           const title = decodeURIComponent(escape(videoData.title)) || 'Unknown Title'
-           
-           const job = {
-             title: title,
-             thumb: videoData.thumb || '',
-             site: videoData.site || 'unknown',
-             url: url,
-             format: local_settings.default_format || 'mkv',
-             video_src: bestQualitySrc,
-             tempid: randomUUID(),
-             duration: videoData.time || '00:00:00',
-             quality: bestQualityLabel
-           }
-           
-           await enqueueDownload(job)
+          const title = decodeURIComponent(escape(videoData.title)) || 'Unknown Title'
+
+          const job = {
+            title: title,
+            thumb: videoData.thumb || '',
+            site: videoData.site || 'unknown',
+            url: url,
+            format: local_settings.default_format || 'mkv',
+            video_src: bestQualitySrc,
+            tempid: randomUUID(),
+            duration: videoData.time || '00:00:00',
+            quality: bestQualityLabel
+          }
+
+          await enqueueDownload(job)
         }
-        
+
       } catch (err) {
         console.error(`Failed to process batch url ${url}:`, err)
       }
@@ -723,7 +771,7 @@ app.whenReady().then(async () => {
     const { title, format, thumb, site, url, video_src, tempid, duration, quality } = v
 
     if (title && format && site && url && video_src) {
-      
+
       await enqueueDownload({ title, format, thumb, site, url, video_src, tempid, duration, quality })
     }
   })
@@ -733,7 +781,7 @@ app.whenReady().then(async () => {
       const registry = new ExtensionRegistry()
 
       const videoData = await registry.extractVideo(v.url)
-    
+
       const videoObject = {
         url: v.url,
         site: videoData.site || 'unknown',
@@ -741,12 +789,12 @@ app.whenReady().then(async () => {
         video_test: videoData.video_test || [],
         thumb: videoData.thumb || '',
         list_quality: videoData.list_quality || [],
-        time:videoData.time || '0:0:0',
+        time: videoData.time || '0:0:0',
         embed: videoData.embed || '',
-        status: videoData.status|| 404,
+        status: videoData.status || 404,
         force_type: videoData.force_type
       }
-      
+
       e.reply('getVideo', videoObject)
     } catch (error) {
       console.error('Error extracting video:', error)

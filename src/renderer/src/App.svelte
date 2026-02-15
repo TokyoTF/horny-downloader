@@ -1,13 +1,10 @@
 <script>
   import UpdateNotification from './components/UpdateNotification.svelte'
   import { updateBanner, showUpdateBanner } from './components/store'
-  import 'vidstack/player/styles/base.css'
-  import 'vidstack/player/styles/plyr/theme.css'
-  import 'vidstack/player'
-  import 'vidstack/player/layouts/plyr'
-  import 'vidstack/player/ui'
+  import Player from './components/player/Player.svelte'
   import { onMount } from 'svelte'
-  import toast, { Toaster } from 'svelte-french-toast'
+  import NotificationToast from './components/NotificationToast.svelte'
+  import { notifications } from './components/NotificationStore'
   import {
     ClipboardIcon,
     FolderIcon,
@@ -21,7 +18,8 @@
     List,
     ArrowDownWideNarrow,
     ArrowUpNarrowWide,
-    FileText
+    FileText,
+    RefreshCw
   } from 'lucide-svelte'
 
   import LogoIcon from './assets/logo.png'
@@ -126,38 +124,56 @@
     loadExtensionsStatus()
   })
 
+  let sites = $state([
+    { value: 'auto', label: 'Auto Detect', requiresExtension: false }
+  ])
+
   async function loadExtensionsStatus() {
     try {
       extensions_status = await window.electron.ipcRenderer.invoke('get-extensions-status')
+      updateSitesList()
     } catch (error) {
       console.error('Error loading extensions status:', error)
     }
   }
 
-  function isExtensionLoaded(siteName) {
-    const extensionName = siteName.charAt(0).toUpperCase() + siteName.slice(1) + 'Extension'
+  function updateSitesList() {
+      const loadedSites = []
+      if (extensions_status && extensions_status.loaded) {
+        Object.values(extensions_status.loaded).forEach((ext) => {
+          if (ext && ext.config && ext.config.name) {
+            loadedSites.push({
+              value: ext.config.name,
+              label: ext.config.name,
+              color: ext.config.color,
+              requiresExtension: true
+            })
+          }
+        })
+      }
 
-    return extensions_status.loaded && extensions_status.loaded[extensionName]
+      loadedSites.sort((a, b) => a.label.localeCompare(b.label))
+
+      sites = [
+        { value: 'auto', label: 'Auto Detect', requiresExtension: false },
+        ...loadedSites
+      ]
   }
 
-  const sites = [
-    { value: 'auto', label: 'Auto Detect', requiresExtension: false },
-    { value: 'pornhub', label: 'Pornhub', requiresExtension: true },
-    { value: 'spankbang', label: 'Spankbang', requiresExtension: true },
-    { value: 'xnxx', label: 'XNXX', requiresExtension: true },
-    { value: 'xvideos', label: 'XVideos', requiresExtension: true },
-    { value: 'xhamster', label: 'xHamster', requiresExtension: true },
-    { value: 'beeg', label: 'BEEG', requiresExtension: true },
-    { value: 'pornone', label: 'PornOne', requiresExtension: true },
-    { value: 'redtube', label: 'RedTube', requiresExtension: true },
-    { value: 'eporner', label: 'Eporner', requiresExtension: true },
-    { value: 'youporn', label: 'YouPorn', requiresExtension: true },
-    { value: 'tube8', label: 'Tube8', requiresExtension: true },
-    { value: 'thumbzilla', label: 'Thumbzilla', requiresExtension: true },
-    { value: 'porndig', label: 'Porndig', requiresExtension: true },
-    { value: 'bunkr', label: 'Bunkr', requiresExtension: true },
-    { value: 'sxyprn', label: 'Sxyprn', requiresExtension: true }
-  ]
+  async function reloadExtensions() {
+    notifications.info('Reloading extensions...', { duration: 1500 });
+    try {
+        extensions_status = await window.electron.ipcRenderer.invoke('reload-extensions')
+        updateSitesList() 
+        notifications.success('Extensions reloaded', { duration: 2000 });
+    } catch (e) {
+        notifications.error('Failed to reload extensions');
+    }
+  }
+
+  function isExtensionLoaded(siteName) {
+    return extensions_status.loaded && extensions_status.loaded[siteName]
+  }
 
   let revealingMap = $state({})
 
@@ -236,16 +252,47 @@
     })
 
     if (isInitialLoad) {
-      toast.success('The list loaded successfully', {
-        icon: '⭐',
-        style: 'background:#242424;color:white;',
-        duration: 1500,
-        position: 'bottom-right'
-      })
+      notifications.success('The list loaded successfully', { duration: 1500 });
       console.timeEnd('LoadingList')
       isInitialLoad = false
+      checkForUpdates()
     }
   })
+
+  let availableUpdates = $state([])
+  let isCheckingUpdates = $state(false)
+
+  async function checkForUpdates() {
+    isCheckingUpdates = true
+    try {
+      availableUpdates = await window.electron.ipcRenderer.invoke('check-for-extension-updates')
+      if (availableUpdates.length > 0) {
+        notifications.info(`${availableUpdates.length} extension updates available`, { duration: 3000 })
+      }
+    } catch (error) {
+      console.error('Error checking for updates:', error)
+    } finally {
+      isCheckingUpdates = false
+    }
+  }
+
+  async function updateExtension(extension) {
+    try {
+      notifications.info(`Updating ${extension.name}...`, { duration: 2000 })
+      const success = await window.electron.ipcRenderer.invoke('update-extension', extension.name)
+      if (success) {
+        notifications.success(`Updated ${extension.name} successfully`, { duration: 2000 })
+        // Remove from list
+        availableUpdates = availableUpdates.filter(u => u.name !== extension.name)
+        // Reload extensions
+        await reloadExtensions()
+      } else {
+        notifications.error(`Failed to update ${extension.name}`)
+      }
+    } catch (error) {
+      notifications.error(`Error updating ${extension.name}`)
+    }
+  }
 
   window.electron.ipcRenderer.on('getCheck', (e, { status, id, pathfile, filesize }) => {
     const idx = locallist.findIndex((it) => it.id === id || it.tempid === id)
@@ -280,38 +327,12 @@
   const window_close = () => (window_video = false)
 
   function siteColor(site) {
-    switch (site) {
-      case 'pornhub':
-        return '#FF9027b0'
-      case 'bunkr':
-        return '#00cc99b0'
-      case 'xvideos':
-        return '#EA0000b0'
-      case 'xnxx':
-        return '#0B5CFFb0'
-      case 'xhamster':
-        return '#fffb0'
-      case 'spankbang':
-        return '#00C3B6b0'
-      case 'beeg':
-        return '#FFCC00b0'
-      case 'porndig':
-        return '#7E57C2b0'
-      case 'redtube':
-        return '#CC0000b0'
-      case 'youporn':
-        return '#FF0066b0'
-      case 'tube8':
-        return '#00AEEFb0'
-      case 'thumbzilla':
-        return '#2ECC71b0'
-      case 'pornone':
-        return '#fd4045b0'
-      case 'eporner':
-        return '#ff5454b0'
-      default:
-        return '#242424b0'
+    const color = sites.find((it) => it.value.toLowerCase() === site.toLowerCase())?.color
+ 
+    if (color) {
+      return color
     }
+    return '#242424b0'
   }
 
   function getVideo() {
@@ -323,12 +344,7 @@
     embed = ''
     getdata = true
     window.electron.ipcRenderer.send('getVideo', { site: 'auto', url: url })
-    toast.success('Obtaining data', {
-      icon: '🤔',
-      style: 'background:#242424;color:white;',
-      duration: 2000,
-      position: 'bottom-right'
-    })
+    notifications.info('Obtaining data', { duration: 2000 });
   }
 
   function updateList(v) {
@@ -342,12 +358,7 @@
       embed = v.embed
       quality_list = v.list_quality.sort((a, b) => b.quality - a.quality)
       selected_quality = quality_list[0].url
-      toast.success('Data obtained', {
-        icon: '🥳',
-        style: 'background:#242424;color:white;',
-        duration: 2000,
-        position: 'bottom-right'
-      })
+      notifications.success('Data obtained', { duration: 2000 });
       setTimeout(() => {
         getdata = false
       }, 1500)
@@ -395,23 +406,13 @@
       })
       url = ''
       window.document.querySelector('.scroll').scrollTo({ top: 0 })
-      toast.success('Starting Download', {
-        icon: '😎',
-        style: 'background:#242424;color:white;',
-        duration: 3000,
-        position: 'bottom-right'
-      })
+      notifications.success('Starting Download', { duration: 3000 });
     }
   }
 
   function copytext(text) {
     navigator.clipboard.writeText(text)
-    toast.success('copied url', {
-      icon: '👌',
-      style: 'background:#242424;color:white;',
-      duration: 2500,
-      position: 'bottom-right'
-    })
+    notifications.success('copied url', { duration: 2500 });
   }
 
   function UpdateStateApp(s) {
@@ -446,12 +447,7 @@
   function saveSettings() {
     localStorage.setItem('app_settings', JSON.stringify(settings))
     window.electron.ipcRenderer.send('updateSettings', JSON.stringify(settings))
-    toast.success('Settings saved', {
-      icon: '⚙️',
-      style: 'background:#242424;color:white;',
-      duration: 2000,
-      position: 'bottom-right'
-    })
+    notifications.success('Settings saved', { duration: 2000 });
 
     window.electron.ipcRenderer.send('updateSettings', JSON.stringify(settings))
     settings_open = false
@@ -468,12 +464,7 @@
       ffmpeg_path: '',
       use_embed: false
     }
-    toast.success('LocalStorage cleared and settings reset', {
-      icon: '🗑️',
-      style: 'background:#242424;color:white;',
-      duration: 2000,
-      position: 'bottom-right'
-    })
+    notifications.success('LocalStorage cleared and settings reset', { duration: 2000 });
   }
 
   function toSeconds(timemark) {
@@ -500,12 +491,7 @@
   window.electron.ipcRenderer.on('getVideo', (e, v) => {
     getdata = true
     if (v.error) {
-      toast.error('Failed to get video data', {
-        icon: '❌',
-        style: 'background:#242424;color:white;',
-        duration: 2000,
-        position: 'bottom-right'
-      })
+      notifications.error('Failed to get video data', { duration: 2000 });
       return
     }
     updateList(v)
@@ -515,12 +501,7 @@
     const key = item.id ?? item.tempid
     if (item.status === 1) {
       try {
-        toast.success('Download cancelled', {
-          icon: '🗑️',
-          style: 'background:#242424;color:white;',
-          duration: 2000,
-          position: 'bottom-right'
-        })
+        notifications.success('Download cancelled', { duration: 2000 });
         window.electron.ipcRenderer.send('cancelDownload', { id: item.id ?? item.tempid })
       } catch {}
     }
@@ -537,18 +518,12 @@
         batchUrls = result.urls
         batchModalOpen = true
         batchQuality = 'max'
-        batchDelay = 0
+        batchDelay = 4000
       } else if (result.error) {
-        toast.error('Error reading file', {
-          style: 'background:#242424;color:white;',
-          position: 'bottom-right'
-        })
+        notifications.error('Error reading file');
       }
     } catch {
-      toast.error('Failed to open file', {
-        style: 'background:#242424;color:white;',
-        position: 'bottom-right'
-      })
+      notifications.error('Failed to open file');
     }
   }
 
@@ -563,32 +538,19 @@
 
       await window.electron.ipcRenderer.invoke('start-batch-download', args)
       
-      toast.success(`Processing ${batchUrls.length} links in background...`, {
-        icon: '🚀',
-        style: 'background:#242424;color:white;',
-        duration: 3000,
-        position: 'bottom-right'
-      })
+      notifications.success(`Processing ${batchUrls.length} links in background...`, { duration: 3000 });
     } catch (err) {
        console.error(err)
-       toast.error('Failed to start batch', {
-        style: 'background:#242424;color:white;',
-        position: 'bottom-right'
-      })
+        notifications.error('Failed to start batch');
     }
   }
 
   window.electron.ipcRenderer.on('deletedItem', (e, { id }) => {
-    toast.success('Item removed', {
-      icon: '🗑️',
-      style: 'background:#242424;color:white;',
-      duration: 2000,
-      position: 'bottom-right'
-    })
+    notifications.success('Item removed', { duration: 2000 });
   })
 </script>
 
-<Toaster />
+<NotificationToast />
 <UpdateNotification />
 
 {#if showSettingsPrompt}
@@ -793,6 +755,8 @@
     </div>
 
     <div class="flex items-center gap-2">
+
+
       <button
         class="px-5 py-2.5 bg-gradient-to-r from-[#FF9027] to-[#FF6B00] disabled:from-[#FF9027] disabled:to-[#FF6B00] disabled:opacity-50 disabled:cursor-not-allowed hover:from-[#FF9C3F] hover:to-[#FF7B1C] text-white font-medium rounded-lg flex items-center gap-2 transition-all duration-200 transform hover:scale-105 active:scale-95 focus:outline-none shadow-lg hover:shadow-[#FF9027]/20"
         onclick={getVideo}
@@ -1230,6 +1194,40 @@
               </div>
             </div>
 
+            {#if availableUpdates.length > 0}
+              <div class="space-y-4">
+                  <div class="flex items-center justify-between">
+                    <h3 class="text-sm font-medium text-gray-300 uppercase tracking-wider">
+                      Available Updates ({availableUpdates.length})
+                    </h3>
+                  </div>
+                  <div class="space-y-3">
+                    {#each availableUpdates as update}
+                      <div class="flex items-center justify-between p-3 bg-[#252525] rounded-lg border border-orange-500/30">
+                        <div class="flex items-center gap-3">
+                          <div class="w-2 h-2 bg-orange-500 rounded-full animate-pulse"></div>
+                          <div>
+                            <p class="text-sm font-medium text-white">
+                              {update.name.replace('Extension', '')}
+                            </p>
+                            <p class="text-xs text-gray-400">
+                              v{update.currentVersion} → <span class="text-green-400">v{update.newVersion}</span>
+                            </p>
+                          </div>
+                        </div>
+                         <button
+                            onclick={() => updateExtension(update)}
+                            class="px-3 py-1.5 bg-orange-600 hover:bg-orange-700 text-white text-xs font-medium rounded transition-colors"
+                          >
+                            Update
+                          </button>
+                      </div>
+                    {/each}
+                  </div>
+                </div>
+                <div class="w-full h-px bg-[#3a3a3a] my-4"></div>
+            {/if}
+
             <div class="space-y-4">
               <div class="flex items-center justify-between">
                 <h3 class="text-sm font-medium text-gray-300 uppercase tracking-wider">
@@ -1243,6 +1241,14 @@
                 >
                   <FolderIcon size={14} />
                   Open Folder
+                </button>
+                <button
+                   onclick={reloadExtensions}
+                   class="text-xs text-[#FF9027] hover:text-[#FF6B00] font-medium flex items-center gap-1.5 transition-colors px-2 py-1 rounded hover:bg-[#FF9027]/10"
+                   title="Reload Extensions"
+                >
+                  <RefreshCw size={14} />
+                  Reload
                 </button>
               </div>
               <div class="space-y-3">
@@ -1405,7 +1411,11 @@
                         <span
                           class="px-1.5 py-0.5 bg-[#252525] rounded text-[10px] font-mono text-gray-300"
                         >
+                        {#if currentDownloading.quality == 'original'}
+                          Original
+                        {:else}
                           {!currentDownloading.quality.includes('k') ? `${currentDownloading.quality}p` : currentDownloading.quality}
+                        {/if}
                         </span>
                       {/if}
                       {#if currentDownloading.format}
@@ -1574,7 +1584,11 @@
                     <span
                       class="px-1.5 py-0.5 bg-[#252525] rounded text-[10px] font-mono text-gray-300"
                     >
+                    {#if item.quality == 'original'}
+                      Original
+                    {:else}
                       {!item.quality.includes('k') ? `${item.quality}p` : item.quality}
+                    {/if}
                     </span>
                   {/if}
 
@@ -1634,7 +1648,12 @@
                           <span
                             class="px-1.5 py-0.5 bg-[#252525] rounded text-[10px] font-mono text-gray-300"
                           >
+
+                          {#if item.quality == 'original'}
+                            Original
+                          {:else}
                             {!item.quality.includes('k') ? `${item.quality}p` : item.quality}
+                          {/if}
                           </span>
                         {/if}
 
@@ -1708,25 +1727,13 @@
             class="w-full md:w-2/3 p-5 border-b md:border-b-0 md:border-r border-[#3a3a3a] bg-[#252525]/50 overflow-hidden"
           >
             <div class="aspect-video bg-black rounded-lg overflow-hidden">
-              {#if settings.use_embed && embed}
-                <iframe src={embed} title="player"></iframe>
-              {:else}
-                <media-player
-                  class="w-full h-full"
-                  volume={0.2}
-                  src={video_test}
-                  crossOrigin={false}
-                >
-                  <media-provider>
-                    <media-poster
-                      class="w-full h-full object-cover"
-                      src={thumb_video}
-                      alt={title_video}
-                    />
-                  </media-provider>
-                  <media-plyr-layout />
-                </media-player>
-              {/if}
+              <Player 
+                useEmbed={settings.use_embed} 
+                embedUrl={embed} 
+                src={video_test} 
+                poster={thumb_video} 
+                title={title_video} 
+              />
             </div>
             <div class="mt-4">
               <h3 class="text-white font-medium text-lg truncate">{title_video}</h3>
@@ -1745,9 +1752,13 @@
                   >
                     {#each quality_list as data}
                       <option value={data.url} class="bg-[#2d2d2d] text-white">
-                        {!data.quality.includes('k') && !data.quality.includes('loading')
-                          ? `${data.quality}p`
-                          : data.quality}
+                        {#if data.quality == 'original'}
+                          Original
+                        {:else}
+                          {!data.quality.includes('k') && !data.quality.includes('loading')
+                            ? `${data.quality}p`
+                            : data.quality}
+                        {/if}
                       </option>
                     {/each}
                   </select>
