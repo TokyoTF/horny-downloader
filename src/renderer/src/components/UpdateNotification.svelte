@@ -2,7 +2,7 @@
   import { onMount } from 'svelte'
 
   import { XIcon, ArrowUpCircle } from 'lucide-svelte'
-  import { toast } from 'svelte-french-toast'
+  import { notifications } from './NotificationStore'
   import { updateBanner,showUpdateBanner } from './store'
 
   let downloadProgress = 0
@@ -19,12 +19,7 @@
       
     } catch (error) {
       console.error('Error downloading update:', error)
-      toast.error('Failed to download update', {
-        icon: '🚩',
-        style: 'background:#242424;color:white;',
-        duration: 2000,
-        position: 'bottom-right'
-      })
+      notifications.error('Failed to download update', { duration: 2000 });
       showUpdateBanner.set(false)
     }
   }
@@ -34,12 +29,7 @@
       await window.api.updater.restartAndUpdate()
     } catch (error) {
       console.error('Error installing update:', error)
-      toast.error('Failed to install update', {
-        icon: '🚩',
-        style: 'background:#242424;color:white;',
-        duration: 2000,
-        position: 'bottom-right'
-      })
+      notifications.error('Failed to install update', { duration: 2000 });
       showUpdateBanner.set(true)
     }
   }
