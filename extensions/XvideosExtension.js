@@ -1,6 +1,8 @@
 export default class XvideosExtension {
   constructor(ExtensionExtra) {
     this.config = {
+      name: 'XVideos',
+      color: '#EA0000b0',
       domains_support: ['xvideos.com'],
       domains_includes: ['/video.', '/embedframe/'],
       embed_preview: 'embedframe',

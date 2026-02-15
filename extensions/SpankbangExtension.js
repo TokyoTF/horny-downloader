@@ -1,6 +1,8 @@
 export default class SpankbangExtension {
   constructor(ExtensionExtra) {
     this.config = {
+      name: 'Spankbang',
+      color: '#00C3B6b0',
       domains_support: ['spankbang.com','la.spankbang.com'],
       domains_includes: ['/embed', '/'],
       embed_preview: 'embed',

@@ -1,6 +1,8 @@
 export default class XhamsterExtension {
   constructor(ExtensionExtra) {
     this.config = {
+      name: 'xHamster',
+      color: '#fffb0',
       domains_support: ['xhamster.com'],
       domains_includes: ['/videos/', '/embed/'],
       embed_preview: 'embed',

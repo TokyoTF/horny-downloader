@@ -1,6 +1,8 @@
 export default class BeegExtension {
   constructor(ExtensionExtra) {
     this.config = {
+      name: 'BEEG',
+      color: '#FFCC00b0',
       domains_support: ['beeg.com'],
       domains_includes: ['/-0'],
       embed_preview: '',

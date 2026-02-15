@@ -1,6 +1,8 @@
 export default class PornhubExtension {
   constructor(ExtensionExtra) {
     this.config = {
+      name: 'Pornhub',
+      color: '#FF9027b0',
       domains_support: ['pornhub.com','es.pornhub.com'],
       domains_includes: ['/embed/', 'viewkey='],
       embed_preview: 'embed',

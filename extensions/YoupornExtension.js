@@ -1,6 +1,8 @@
 export default class YoupornExtension {
   constructor(ExtensionExtra) {
     this.config = {
+      name: 'YouPorn',
+      color: '#FF0066b0',
       domains_support: ['youporn.com', 'www.youporn.com'],
       domains_includes: ['/embed/', '/watch/'],
       embed_preview: 'embed',

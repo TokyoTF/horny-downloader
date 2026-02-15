@@ -2,6 +2,8 @@ export default class EpornerExtension {
   constructor(ExtensionExtra) {
 
     this.config = {
+      name: 'Eporner',
+      color: '#ff5454b0',
       domains_support: ['eporner.com', 'www.eporner.com'],
       domains_includes: ['/video-', '/embed/'],
       embed_preview: 'embed',

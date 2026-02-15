@@ -1,6 +1,8 @@
 export default class SxyprnExtension {
   constructor(ExtensionExtra) {
     this.config = {
+      name: 'Sxyprn',
+      color: '#a7aec1',
       domains_support: ['sxyprn.com'],
       domains_includes: ['/post/'],
       embed_preview: '',
@@ -9,38 +11,66 @@ export default class SxyprnExtension {
       format_support: ['mp4'],
       vtt_support: false,
       quality_support: ['original'],
-      version: '1.0.0'
+      version: '1.0.1'
     }
     this.extension = new ExtensionExtra(this.config)
   }
+
+  decryptPath(parts) {
+    parts[5] -= this.sumDigits(parts[6]) + this.sumDigits(parts[7]);
+    return parts;
+  }
+
+  sumDigits(input) {
+    return String(input)
+      .replace(/\D/g, '')
+      .split('')
+      .reduce((acc, digit) => acc + parseInt(digit, 10), 0);
+  }
+
+  createToken(start, end) {
+    const map = {
+      '+': '-',
+      '/': '_',
+      '=': '.'
+    };
+    return btoa(`${start}-${this.config.prefix_url}-${end}`).replace(/[+/=]/g, char => map[char]);
+  }
+  
 
   async extract(url) {
     const req = await fetch(url, {
       headers: this.extension.getDefaultHeaders()
     })
     const view = await req.text()
-
+    const $ = this.extension.cherrio(view)
 
     const videoIdMatch = url.match(/\/post\/([a-z0-p]+)\.html/i)
     const videoId = videoIdMatch ? videoIdMatch[1] : null
     const vnfoMeta = view.match(/data-vnfo='([^']+)'/)
 
-
     let vnfoData = {}
     vnfoData = JSON.parse(vnfoMeta[1])
 
-    const videoPath = vnfoData[videoId]
-    const videoSrc = `https://sxyprn.com${videoPath}`
-    const title = this.extension.cherrio(view)('title').text().trim()
-    const thumb = this.extension.cherrio(view)('meta[property="og:image"]').attr('content') || ''
+    let segments = vnfoData[videoId].split("/");
+
+    segments[1] += "8/" + this.createToken(this.sumDigits(segments[6]), this.sumDigits(segments[7]));
+    segments = this.decryptPath(segments);
+
+    const video_path = segments.join("/");
+    const video_src = `https://sxyprn.com${video_path}`
+    const title_video = $('title').text().trim()
+    const timeMeta = view.match(/Video Info.*?duration:<b>(.*?)<\/b>/)
+    const time_video = timeMeta ? this.extension.formatDuration(timeMeta[1],'',true) : ''
+    const thumb_video = $('meta[property="og:image"]').attr('content') || ''
 
     return this.extension.createResponse({
       embed: '',
-      video_test: videoSrc,
-      list_quality: [{ quality: 'original', url: videoSrc }],
-      title: title || 'Unknown Title',
-      time: '',
-      thumb: thumb,
+      video_test: video_src,
+      list_quality: [{ quality: 'original', url: video_src }],
+      title: title_video.replace("–","") || 'Unknown Title',
+      time: time_video,
+      thumb: thumb_video,
       status: req.status,
       force_type: 'video/mp4'
     })

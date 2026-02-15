@@ -1,6 +1,8 @@
 export default class BunkrExtension {
   constructor(ExtensionExtra) {
     this.config = {
+      name: 'Bunkr',
+      color: '#00cc99b0',
       domains_support: ['bunkr.cr', 'bunkr.site','bunkr.si'],
       domains_includes: ['/v/', '/d/', '/i/'],
       embed_preview: '',

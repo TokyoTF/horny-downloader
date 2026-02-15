@@ -1,6 +1,8 @@
 export default class RedtubeExtension {
   constructor(ExtensionExtra) {
     this.config = {
+      name: 'RedTube',
+      color: '#CC0000b0',
       domains_support: ['redtube.com'],
       domains_includes: ['/'],
       embed_preview: '',
