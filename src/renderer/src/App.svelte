@@ -1,31 +1,50 @@
 <script>
+  import { onMount } from 'svelte'
+  
+  import Player from './components/player/Player.svelte'
+  import NotificationToast from './components/NotificationToast.svelte'
   import UpdateNotification from './components/UpdateNotification.svelte'
   import { updateBanner, showUpdateBanner } from './components/store'
-  import Player from './components/player/Player.svelte'
-  import { onMount } from 'svelte'
-  import NotificationToast from './components/NotificationToast.svelte'
   import { notifications } from './components/NotificationStore'
+  
+  // --- Icons & Assets ---
   import {
-    ClipboardIcon,
-    FolderIcon,
-    XIcon,
-    MinusIcon,
-    SquareIcon,
-    SettingsIcon,
-    TriangleAlertIcon,
-    SearchIcon,
-    LayoutGrid,
-    List,
-    ArrowDownWideNarrow,
-    ArrowUpNarrowWide,
-    FileText,
-    RefreshCw
+    ClipboardIcon, FolderIcon, XIcon, MinusIcon, SquareIcon, SettingsIcon,
+    TriangleAlertIcon, SearchIcon, LayoutGrid, List, ArrowDownWideNarrow,
+    ArrowUpNarrowWide, FileText, RefreshCw
   } from 'lucide-svelte'
-
   import LogoIcon from './assets/logo.png'
 
-  let url = $state('')
+  // --- App State ---
   let appVersion = $state('')
+  let isDev = $state(false)
+  let isInitialLoad = true
+
+  // --- Settings State ---
+  let settings_open = $state(false)
+  let showSettingsPrompt = $state(false)
+  let missingSettings = $state([])
+  let settings = $state({
+    default_format: 'mkv',
+    concurrent_downloads: 3,
+    namefile_type: 'video_title',
+    threads: '1',
+    ffmpeg_path: '',
+    download_folder: '',
+    use_embed: false,
+    extension_branch: 'main',
+    dev_auto_sync: false,
+    custom_ffmpeg_params: ''
+  })
+
+  // --- Extensions State ---
+  let extensions_status = $state({})
+  let sites = $state([{ value: 'auto', label: 'Auto Detect', requiresExtension: false }])
+  let availableUpdates = $state([])
+  let isCheckingUpdates = $state(false)
+
+  // --- Video & Download State ---
+  let url = $state('')
   let locallist = $state([])
   let getdata = $state(true)
   let video_test = $state('')
@@ -40,44 +59,28 @@
   let site_video = ''
   let url_video = $state('')
   let window_video = $state(false)
-  let extensions_status = $state({})
+  
+  // --- UI State ---
   let searchQuery = $state('')
   let searchType = $state('title')
   let viewMode = $state('list')
   let sortType = $state('date')
   let sortDirection = $state('desc')
   let activeTab = $state('all')
+  let revealingMap = $state({})
+
+  // --- Batch Import State ---
+  let batchModalOpen = $state(false)
+  let batchUrls = $state([])
+  let batchQuality = $state('max')
+  let batchDelay = $state(4000)
+
+  // --- Derived State ---
   let currentDownloading = $derived(
     (locallist
       .filter((it) => it.status === 1)
       .sort((a, b) => parseCreatedAt(b.created_at) - parseCreatedAt(a.created_at)))[0] || null
   )
-  function sameItem(a, b) {
-    if (!a || !b) return false
-    if (a.tempid != null && b.tempid != null) return a.tempid === b.tempid
-    if (a.id != null && b.id != null) return a.id === b.id
-    if (a.url && b.url) return a.url === b.url
-    return false
-  }
-
-  function parseCreatedAt(val) {
-    if (!val) return 0
-    if (val instanceof Date) return val.getTime()
-    if (typeof val === 'number') return val
-    if (typeof val === 'string') {
-      const iso = val.includes('T') ? val : val.replace(' ', 'T')
-      const t = new Date(iso).getTime()
-      if (!isNaN(t)) return t
-      const t2 = new Date(val).getTime()
-      return isNaN(t2) ? 0 : t2
-    }
-    try {
-      const t = new Date(val).getTime()
-      return isNaN(t) ? 0 : t
-    } catch {
-      return 0
-    }
-  }
 
   let filteredList = $derived(
     locallist
@@ -114,19 +117,307 @@
         return sortDirection === 'asc' ? -diff : diff
       })
   )
+
   let filteredListDisplay = $derived(
     currentDownloading
       ? filteredList.filter((it) => !sameItem(it, currentDownloading))
       : filteredList
   )
+
+  // --- Initialization ---
+
   onMount(async () => {
-    appVersion = await window.electron.ipcRenderer.invoke('get-app-version')
-    loadExtensionsStatus()
+    // Load settings from localStorage
+    try {
+      const saved = localStorage.getItem('app_settings')
+      if (saved) {
+        const parsed = JSON.parse(saved)
+        settings = { ...settings, ...parsed }
+        if (parsed.default_format) format_video = parsed.default_format
+      }
+    } catch(e) { console.error('Error parsing settings:', e) }
+
+    // Check settings prompt immediately
+    checkRequiredSettings()
+
+    // Send initial settings to main process
+    window.electron.ipcRenderer.send('updateSettings', JSON.stringify(settings))
+
+    // Setup Listeners
+    setupIpcListeners()
+
+    try {
+      // Parallel loading of app info
+      const [version, dev, extStatus] = await Promise.all([
+        window.electron.ipcRenderer.invoke('get-app-version'),
+        window.electron.ipcRenderer.invoke('is-dev'),
+        window.electron.ipcRenderer.invoke('get-extensions-status')
+      ])
+
+      appVersion = version
+      isDev = dev
+      extensions_status = extStatus
+      updateSitesList()
+
+      // Auto sync for dev
+      if (isDev && settings.dev_auto_sync) {
+        syncExtensions()
+      }
+    } catch (error) {
+      console.error('Initialization error:', error)
+    }
+
+    // Load List
+    console.time('LoadingList')
+    window.electron.ipcRenderer.send('getList')
+
+    return () => {
+      removeIpcListeners()
+    }
   })
 
-  let sites = $state([
-    { value: 'auto', label: 'Auto Detect', requiresExtension: false }
-  ])
+  // --- IPC Handlers ---
+  
+  function setupIpcListeners() {
+    removeIpcListeners()
+    window.electron.ipcRenderer.on('getList', handleGetList)
+    window.electron.ipcRenderer.on('getCheck', handleGetCheck)
+    window.electron.ipcRenderer.on('getProgress', handleGetProgress)
+    window.electron.ipcRenderer.on('getVideo', handleGetVideo)
+    window.electron.ipcRenderer.on('deletedItem', handleDeletedItem)
+  }
+
+  function removeIpcListeners() {
+    window.electron.ipcRenderer.removeAllListeners('getList')
+    window.electron.ipcRenderer.removeAllListeners('getCheck')
+    window.electron.ipcRenderer.removeAllListeners('getProgress')
+    window.electron.ipcRenderer.removeAllListeners('getVideo')
+    window.electron.ipcRenderer.removeAllListeners('deletedItem')
+  }
+
+  const handleGetList = (e, v) => {
+    const newList = v.sort((a, b) => parseCreatedAt(b.created_at) - parseCreatedAt(a.created_at))
+    
+    locallist = newList.map(item => {
+      const existing = locallist.find(it => 
+        (item.id && it.id === item.id) || 
+        (item.tempid && it.tempid === item.tempid) ||
+        (item.url === it.url && item.status === it.status)
+      )
+
+      const thumb = item.thumb
+
+      if (existing) {
+        return {
+          ...existing,
+          ...item,
+          thumb,
+          load: item.status === 1 ? (existing.load ?? 0) : (item.status === 2 ? 100 : 0)
+        }
+      }
+      return { ...item, thumb, load: item.status === 2 ? 100 : 0 }
+    })
+
+    if (isInitialLoad) {
+      notifications.success('The list loaded successfully', { duration: 1500 });
+      console.timeEnd('LoadingList')
+      isInitialLoad = false
+      checkForUpdates()
+    }
+  }
+
+  const handleGetCheck = (e, { status, id, pathfile, filesize }) => {
+    const idx = locallist.findIndex((it) => it.id === id || it.tempid === id)
+    if (idx !== -1) {
+      locallist[idx].status = status
+      if (id && !locallist[idx].id) {
+        locallist[idx].id = id
+      }
+      if (pathfile) {
+        locallist[idx].pathfile = pathfile
+      }
+      if (status === 2) {
+        locallist[idx].load = 100
+        locallist[idx].filesize = filesize
+      } else if (status === 3) {
+        locallist[idx].load = 0
+      }
+    }
+  }
+
+  const handleGetProgress = (e, { id, load, filesize }) => {
+    const idx = locallist.findIndex((it) => it.id === id || it.tempid === id)
+    if (idx !== -1) {
+      locallist[idx].load = load
+      if (filesize) locallist[idx].filesize = filesize
+    }
+  }
+
+  const handleGetVideo = (e, v) => {
+    getdata = true
+    if (v.error) {
+      notifications.error('Failed to get video data', { duration: 2000 });
+      return
+    }
+    updateList(v)
+  }
+
+  const handleDeletedItem = (e, { id }) => {
+    notifications.success('Item removed', { duration: 2000 });
+  }
+
+
+
+  // --- Helper Functions ---
+
+  function sameItem(a, b) {
+    if (!a || !b) return false
+    if (a.tempid != null && b.tempid != null) return a.tempid === b.tempid
+    if (a.id != null && b.id != null) return a.id === b.id
+    if (a.url && b.url) return a.url === b.url
+    return false
+  }
+
+  function parseCreatedAt(val) {
+    if (!val) return 0
+    if (val instanceof Date) return val.getTime()
+    if (typeof val === 'number') return val
+    if (typeof val === 'string') {
+      const iso = val.includes('T') ? val : val.replace(' ', 'T')
+      const t = new Date(iso).getTime()
+      if (!isNaN(t)) return t
+      const t2 = new Date(val).getTime()
+      return isNaN(t2) ? 0 : t2
+    }
+    try {
+      const t = new Date(val).getTime()
+      return isNaN(t) ? 0 : t
+    } catch {
+      return 0
+    }
+  }
+
+  function format_time(time, secondTime) {
+    const secondsTimeTrack = secondTime ? time : toSeconds(time)
+    const hours = Math.floor(secondsTimeTrack / 3600)
+    const minutes = Math.floor((secondsTimeTrack % 3600) / 60)
+    const seconds = Math.floor(secondsTimeTrack % 60)
+    return `${hours > 0 ? hours + 'h ' : ''}${minutes > 0 ? minutes + 'm ' : ''}${seconds > 0 ? seconds + 's' : ''}`
+  }
+
+  function bytesToSize(bytes) {
+    var sizes = ['B', 'K', 'M', 'G', 'T', 'P']
+    for (var i = 0; i < sizes.length; i++) {
+      if (bytes <= 1024) {
+        return Math.round(bytes) + ' ' + sizes[i]
+      } else {
+        bytes = parseFloat(bytes / 1024).toFixed(2)
+      }
+    }
+    return bytes + ' P'
+  }
+
+  function toSeconds(timemark) {
+    if (!timemark) return 0
+    const parts = timemark.split(':')
+    if (parts.length < 3) return 0
+    const [hh, mm, ss] = parts
+    const seconds = parseFloat(ss) + (parseInt(mm, 10) || 0) * 60 + (parseInt(hh, 10) || 0) * 3600
+    return isNaN(seconds) ? 0 : seconds
+  }
+
+  function copytext(text) {
+    navigator.clipboard.writeText(text)
+    notifications.success('copied url', { duration: 2500 });
+  }
+  
+  function siteColor(site) {
+    const color = sites.find((it) => it.value.toLowerCase() === site.toLowerCase())?.color
+    if (color) {
+      return color
+    }
+    return '#242424b0'
+  }
+
+  function updateList(v) {
+    if (v.status == 200) {
+      video_test = !v.force_type ? { src: v.video_test } : { src: v.video_test, type: v.force_type }
+      title_video = decodeURI(v.title)
+      time_video = v.time
+      thumb_video = v.thumb
+      site_video = v.site
+      url_video = v.url
+      embed = v.embed
+      quality_list = v.list_quality.sort((a, b) => b.quality - a.quality)
+      selected_quality = quality_list[0].url
+      notifications.success('Data obtained', { duration: 2000 });
+      setTimeout(() => {
+        getdata = false
+      }, 1500)
+    }
+  }
+
+  function reveal(item) {
+    const path = item && item.pathfile ? item.pathfile : ''
+    if (!path) return
+    if (revealingMap[path]) return
+    revealingMap = { ...revealingMap, [path]: true }
+    window.electron.ipcRenderer.send('revealFile', { path })
+    setTimeout(() => {
+      delete revealingMap[path]
+      revealingMap = revealingMap
+    }, 1500)
+  }
+
+  // --- Settings Functions ---
+
+  function checkRequiredSettings() {
+    missingSettings = []
+    if (!settings.ffmpeg_path) missingSettings.push('FFmpeg Path')
+    if (!settings.download_folder) missingSettings.push('Download Folder')
+    showSettingsPrompt = missingSettings.length > 0
+  }
+
+  function openSettings() {
+    settings_open = true
+    showSettingsPrompt = false
+  }
+
+  function closeSettings() {
+    settings_open = false
+  }
+
+  function saveSettings() {
+    localStorage.setItem('app_settings', JSON.stringify(settings))
+    window.electron.ipcRenderer.send('updateSettings', JSON.stringify(settings))
+    notifications.success('Settings saved', { duration: 2000 });
+    settings_open = false
+  }
+
+  function clearLocalStorage() {
+    localStorage.clear()
+    settings = {
+      default_format: 'mkv',
+      concurrent_downloads: 3,
+      namefile_type: 'video_title',
+      threads: '1',
+      ffmpeg_path: '',
+      download_folder: '',
+      use_embed: false,
+      extension_branch: 'main',
+      dev_auto_sync: false,
+      custom_ffmpeg_params: ''
+    }
+    notifications.success('LocalStorage cleared and settings reset', { duration: 2000 });
+  }
+
+  function UpdateStateApp(s) {
+    window.electron.ipcRenderer.send('setState', s)
+  }
+
+  const window_close = () => (window_video = false)
+
+  // --- Extension Functions ---
 
   async function loadExtensionsStatus() {
     try {
@@ -175,97 +466,10 @@
     return extensions_status.loaded && extensions_status.loaded[siteName]
   }
 
-  let revealingMap = $state({})
-
-  let settings_open = $state(false)
-  let settings = $state({
-    default_format: 'mkv',
-    concurrent_downloads: 3,
-    namefile_type: 'video_title',
-    threads: '1',
-    ffmpeg_path: '',
-    download_folder: '',
-    use_embed: false
-  })
-
-  let showSettingsPrompt = $state(false)
-  let missingSettings = $state([])
-
-  let batchModalOpen = $state(false)
-  let batchUrls = $state([])
-  let batchQuality = $state('max')
-  let batchDelay = $state(4000)
-
-  onMount(async () => {
-    const saved = localStorage.getItem('app_settings')
-    if (saved) {
-      settings = JSON.parse(saved)
-    }
-    setTimeout(checkRequiredSettings, 500)
-  })
-
-  function checkRequiredSettings() {
-    missingSettings = []
-    if (!settings.ffmpeg_path) missingSettings.push('FFmpeg Path')
-    if (!settings.download_folder) missingSettings.push('Download Folder')
-    showSettingsPrompt = missingSettings.length > 0
-  }
-
-  function openSettings() {
-    settings_open = true
-    showSettingsPrompt = false
-  }
-
-  const saved = localStorage.getItem('app_settings')
-  if (saved) {
-    const parsed = JSON.parse(saved)
-    settings = { ...settings, ...parsed }
-    format_video = parsed.default_format ?? settings.default_format
-  }
-
-  window.electron.ipcRenderer.send('updateSettings', JSON.stringify(settings))
-  window.electron.ipcRenderer.send('getList')
-
-  let isInitialLoad = true
-  console.time('LoadingList')
-  window.electron.ipcRenderer.on('getList', (e, v) => {
-    const newList = v.sort((a, b) => parseCreatedAt(b.created_at) - parseCreatedAt(a.created_at))
-    
-    locallist = newList.map(item => {
-      const existing = locallist.find(it => 
-        (item.id && it.id === item.id) || 
-        (item.tempid && it.tempid === item.tempid) ||
-        (item.url === it.url && item.status === it.status)
-      )
-
-      const thumb = item.thumb
-
-      if (existing) {
-        return {
-          ...existing,
-          ...item,
-          thumb,
-          load: item.status === 1 ? (existing.load ?? 0) : (item.status === 2 ? 100 : 0)
-        }
-      }
-      return { ...item, thumb, load: item.status === 2 ? 100 : 0 }
-    })
-
-    if (isInitialLoad) {
-      notifications.success('The list loaded successfully', { duration: 1500 });
-      console.timeEnd('LoadingList')
-      isInitialLoad = false
-      checkForUpdates()
-    }
-  })
-
-  let availableUpdates = $state([])
-  let isCheckingUpdates = $state(false)
-
   async function checkForUpdates() {
     isCheckingUpdates = true
     try {
-      availableUpdates = await window.electron.ipcRenderer.invoke('check-for-extension-updates')
+      availableUpdates = await window.electron.ipcRenderer.invoke('check-for-extension-updates', settings.extension_branch || 'main')
       if (availableUpdates.length > 0) {
         notifications.info(`${availableUpdates.length} extension updates available`, { duration: 3000 })
       }
@@ -279,12 +483,12 @@
   async function updateExtension(extension) {
     try {
       notifications.info(`Updating ${extension.name}...`, { duration: 2000 })
-      const success = await window.electron.ipcRenderer.invoke('update-extension', extension.name)
+      const success = await window.electron.ipcRenderer.invoke('update-extension', { name: extension.name, branch: settings.extension_branch || 'main' })
       if (success) {
         notifications.success(`Updated ${extension.name} successfully`, { duration: 2000 })
-        // Remove from list
+
         availableUpdates = availableUpdates.filter(u => u.name !== extension.name)
-        // Reload extensions
+        
         await reloadExtensions()
       } else {
         notifications.error(`Failed to update ${extension.name}`)
@@ -294,46 +498,22 @@
     }
   }
 
-  window.electron.ipcRenderer.on('getCheck', (e, { status, id, pathfile, filesize }) => {
-    const idx = locallist.findIndex((it) => it.id === id || it.tempid === id)
-    if (idx !== -1) {
-      locallist[idx].status = status
-      if (id && !locallist[idx].id) {
-        locallist[idx].id = id
+  async function syncExtensions() {
+    try {
+      const result = await window.electron.ipcRenderer.invoke('copy-extensions-to-documents')
+      if (result.success) {
+        notifications.success(`Synced ${result.count || 0} extensions to Documents`, { duration: 2000 })
+        await reloadExtensions()
+      } else {
+        notifications.error(result.error || 'Failed to sync extensions')
       }
-      if (pathfile) {
-        locallist[idx].pathfile = pathfile
-      }
-      if (status === 2) {
-        locallist[idx].load = 100
-        locallist[idx].filesize = filesize
-      } else if (status === 3) {
-        locallist[idx].load = 0
-      }
-      locallist = locallist
+    } catch (err) {
+      console.error(err)
+      notifications.error('Error syncing extensions')
     }
-  })
-
-  window.electron.ipcRenderer.on('getProgress', (e, { id, load, filesize }) => {
-    const idx = locallist.findIndex((it) => it.id === id || it.tempid === id)
-
-    if (idx !== -1) {
-      locallist[idx].load = load
-      if (filesize) locallist[idx].filesize = filesize
-      locallist = locallist
-    }
-  })
-
-  const window_close = () => (window_video = false)
-
-  function siteColor(site) {
-    const color = sites.find((it) => it.value.toLowerCase() === site.toLowerCase())?.color
- 
-    if (color) {
-      return color
-    }
-    return '#242424b0'
   }
+
+  // --- Download & Batch ---
 
   function getVideo() {
     window_video = true
@@ -345,24 +525,6 @@
     getdata = true
     window.electron.ipcRenderer.send('getVideo', { site: 'auto', url: url })
     notifications.info('Obtaining data', { duration: 2000 });
-  }
-
-  function updateList(v) {
-    if (v.status == 200) {
-      video_test = !v.force_type ? { src: v.video_test } : { src: v.video_test, type: v.force_type }
-      title_video = decodeURI(v.title)
-      time_video = v.time
-      thumb_video = v.thumb
-      site_video = v.site
-      url_video = v.url
-      embed = v.embed
-      quality_list = v.list_quality.sort((a, b) => b.quality - a.quality)
-      selected_quality = quality_list[0].url
-      notifications.success('Data obtained', { duration: 2000 });
-      setTimeout(() => {
-        getdata = false
-      }, 1500)
-    }
   }
 
   function startDownload() {
@@ -409,93 +571,6 @@
       notifications.success('Starting Download', { duration: 3000 });
     }
   }
-
-  function copytext(text) {
-    navigator.clipboard.writeText(text)
-    notifications.success('copied url', { duration: 2500 });
-  }
-
-  function UpdateStateApp(s) {
-    window.electron.ipcRenderer.send('setState', s)
-  }
-
-  function closeSettings() {
-    settings_open = false
-  }
-
-  function format_time(time, secondTime) {
-    const secondsTimeTrack = secondTime ? time : toSeconds(time)
-    const hours = Math.floor(secondsTimeTrack / 3600)
-    const minutes = Math.floor((secondsTimeTrack % 3600) / 60)
-    const seconds = Math.floor(secondsTimeTrack % 60)
-
-    return `${hours > 0 ? hours + 'h ' : ''}${minutes > 0 ? minutes + 'm ' : ''}${seconds > 0 ? seconds + 's' : ''}`
-  }
-
-  function bytesToSize(bytes) {
-    var sizes = ['B', 'K', 'M', 'G', 'T', 'P']
-    for (var i = 0; i < sizes.length; i++) {
-      if (bytes <= 1024) {
-        return Math.round(bytes) + ' ' + sizes[i]
-      } else {
-        bytes = parseFloat(bytes / 1024).toFixed(2)
-      }
-    }
-    return bytes + ' P'
-  }
-
-  function saveSettings() {
-    localStorage.setItem('app_settings', JSON.stringify(settings))
-    window.electron.ipcRenderer.send('updateSettings', JSON.stringify(settings))
-    notifications.success('Settings saved', { duration: 2000 });
-
-    window.electron.ipcRenderer.send('updateSettings', JSON.stringify(settings))
-    settings_open = false
-  }
-
-  function clearLocalStorage() {
-    localStorage.clear()
-    settings = {
-      default_format: 'mkv',
-      concurrent_downloads: 3,
-      namefile_type: 'video_title',
-      threads: '1',
-      download_folder: '',
-      ffmpeg_path: '',
-      use_embed: false
-    }
-    notifications.success('LocalStorage cleared and settings reset', { duration: 2000 });
-  }
-
-  function toSeconds(timemark) {
-    if (!timemark) return 0
-    const parts = timemark.split(':')
-    if (parts.length < 3) return 0
-    const [hh, mm, ss] = parts
-    const seconds = parseFloat(ss) + (parseInt(mm, 10) || 0) * 60 + (parseInt(hh, 10) || 0) * 3600
-    return isNaN(seconds) ? 0 : seconds
-  }
-
-  function reveal(item) {
-    const path = item && item.pathfile ? item.pathfile : ''
-    if (!path) return
-    if (revealingMap[path]) return
-    revealingMap = { ...revealingMap, [path]: true }
-    window.electron.ipcRenderer.send('revealFile', { path })
-    setTimeout(() => {
-      delete revealingMap[path]
-      revealingMap = revealingMap
-    }, 1500)
-  }
-
-  window.electron.ipcRenderer.on('getVideo', (e, v) => {
-    getdata = true
-    if (v.error) {
-      notifications.error('Failed to get video data', { duration: 2000 });
-      return
-    }
-    updateList(v)
-  })
 
   function removeItem(item) {
     const key = item.id ?? item.tempid
@@ -544,10 +619,6 @@
         notifications.error('Failed to start batch');
     }
   }
-
-  window.electron.ipcRenderer.on('deletedItem', (e, { id }) => {
-    notifications.success('Item removed', { duration: 2000 });
-  })
 </script>
 
 <NotificationToast />
@@ -557,7 +628,7 @@
   <div class="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
     <div class="bg-[#252525] rounded-lg shadow-xl max-w-md w-full p-6 border border-orange-500/50">
       <div class="flex items-start gap-3 mb-4">
-        <TriangleAlertIcon class="h-6 w-6 text-orange-400 mt-0.5 flex-shrink-0" />
+        <TriangleAlertIcon class="h-6 w-6 text-orange-400 mt-0.5 shrink-0" />
         <div>
           <h3 class="text-lg font-semibold text-white mb-1">Configuration Required</h3>
           <p class="text-gray-300 text-sm">The following required settings are not configured:</p>
@@ -624,7 +695,7 @@
         </button>
         <button
           onclick={startBatchProcessing}
-          class="px-4 py-2 bg-gradient-to-r from-[#FF9027] to-[#FF6B00] hover:from-[#FF9C3F] hover:to-[#FF7B1C] text-white rounded-lg text-sm font-medium transition-colors shadow-lg shadow-orange-900/20"
+          class="px-4 py-2 bg-linear-to-r from-[#FF9027] to-[#FF6B00] hover:from-[#FF9C3F] hover:to-[#FF7B1C] text-white rounded-lg text-sm font-medium transition-colors shadow-lg shadow-orange-900/20"
         >
           Start Import
         </button>
@@ -634,13 +705,13 @@
 {/if}
 
 <div
-  class="w-full h-10 bg-[#202020] flex items-center justify-between top-0 left-0 right-0 absolute move z-[99] pl-3"
+  class="w-full h-10 bg-[#202020] flex items-center justify-between top-0 left-0 right-0 absolute move z-99 pl-3"
 >
   <div class="flex items-center gap-4">
     <div class="flex items-center gap-2">
       <img src={LogoIcon} alt="" class="w-5 h-5" />
       <div class="flex items-baseline gap-1.5">
-        <h1 class="text-white text-sm font-medium">Horny Downloader</h1>
+        <h1 class="text-white text-sm font-medium">Horny Downloaders</h1>
         <span class="text-xs text-gray-400">v{appVersion}</span>
         {#if $updateBanner}
           <button
@@ -758,7 +829,7 @@
 
 
       <button
-        class="px-5 py-2.5 bg-gradient-to-r from-[#FF9027] to-[#FF6B00] disabled:from-[#FF9027] disabled:to-[#FF6B00] disabled:opacity-50 disabled:cursor-not-allowed hover:from-[#FF9C3F] hover:to-[#FF7B1C] text-white font-medium rounded-lg flex items-center gap-2 transition-all duration-200 transform hover:scale-105 active:scale-95 focus:outline-none shadow-lg hover:shadow-[#FF9027]/20"
+        class="px-5 py-2.5 bg-linear-to-r from-[#FF9027] to-[#FF6B00] disabled:from-[#FF9027] disabled:to-[#FF6B00] disabled:opacity-50 disabled:cursor-not-allowed hover:from-[#FF9C3F] hover:to-[#FF7B1C] text-white font-medium rounded-lg flex items-center gap-2 transition-all duration-200 transform hover:scale-105 active:scale-95 focus:outline-none shadow-lg hover:shadow-[#FF9027]/20"
         onclick={getVideo}
         disabled={settings.ffmpeg_path === '' || settings.download_folder === ''}
       >
@@ -1191,6 +1262,81 @@
                     />
                   </div>
                 </div>
+
+                <div class="space-y-1.5">
+                  <label for="setting-custom-ffmpeg" class="block text-sm font-medium text-gray-200">
+                    Custom FFmpeg Params
+                    <span class="ml-1 text-xs text-gray-400 font-normal">(Advanced)</span>
+                  </label>
+                  <textarea
+                    id="setting-custom-ffmpeg"
+                    bind:value={settings.custom_ffmpeg_params}
+                    rows="2"
+                    class="w-full px-3.5 py-2 bg-[#252525] border border-[#3a3a3a] hover:border-[#4a4a4a] focus:border-[#FF9027] focus:ring-2 focus:ring-[#FF9027]/30 rounded-lg text-sm text-white transition-all duration-200 resize-none font-mono placeholder-gray-500"
+                    placeholder="e.g. -preset fast -crf 23"
+                  ></textarea>
+                  <p class="text-xs text-gray-500">FFmpeg output flags appended to every download.</p>
+                </div>
+
+                {#if isDev}
+                <div class="space-y-1.5 border-t border-[#3a3a3a] pt-4 mt-2">
+                    <h4 class="text-xs font-semibold text-purple-400 uppercase tracking-wide mb-3">Developer Settings</h4>
+                    <div class="flex items-center justify-between">
+                        <label for="dev-auto-sync" class="text-sm font-medium text-gray-200">
+                            Auto-sync extensions
+                            <span class="ml-1 text-xs text-gray-400 font-normal block">Sync project extensions to Documents</span>
+                        </label>
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input
+                                type="checkbox"
+                                id="dev-auto-sync"
+                                checked={settings.dev_auto_sync}
+                                onchange={(e) => {
+                                    settings.dev_auto_sync = e.currentTarget.checked;
+                                    if(settings.dev_auto_sync) syncExtensions();
+                                }}
+                                class="sr-only peer"
+                            />
+                            <div
+                                class="w-9 h-5 bg-gray-700 rounded-full peer peer-checked:after:translate-x-4 peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-purple-600"
+                            ></div>
+                        </label>
+                    </div>
+                </div>
+                {/if}
+              <div class="space-y-1.5">
+                  <label for="setting-branch" class="block text-sm font-medium text-gray-200">
+                    Extension Branch
+                    <span class="ml-1 text-xs text-gray-400 font-normal">(For updates)</span>
+                  </label>
+                  <div class="relative">
+                    <select
+                      id="setting-branch"
+                      class="w-full px-3.5 py-2 bg-[#252525] border border-[#3a3a3a] hover:border-[#4a4a4a] focus:border-[#FF9027] focus:ring-2 focus:ring-[#FF9027]/30 rounded-lg text-sm text-white transition-all duration-200 appearance-none cursor-pointer"
+                      bind:value={settings.extension_branch}
+                    >
+                      <option value="main">Main (Stable)</option>
+                      <option value="dev">Dev (Beta)</option>
+                    </select>
+                    <div
+                      class="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none"
+                    >
+                      <svg
+                        class="h-4 w-4 text-gray-400"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          stroke-width="2"
+                          d="M19 9l-7 7-7-7"
+                        />
+                      </svg>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -1318,7 +1464,7 @@
             </button>
             <button
               onclick={saveSettings}
-              class="px-5 py-2 text-sm font-medium text-white bg-gradient-to-r from-[#FF9027] to-[#FF6B00] hover:from-[#FF9C3F] hover:to-[#FF7B1C] rounded-lg transition-all duration-200 transform hover:scale-105 focus:ring-offset-2 focus:ring-offset-[#1e1e1e] shadow-lg hover:shadow-[#FF9027]/20"
+              class="px-5 py-2 text-sm font-medium text-white bg-linear-to-r from-[#FF9027] to-[#FF6B00] hover:from-[#FF9C3F] hover:to-[#FF7B1C] rounded-lg transition-all duration-200 transform hover:scale-105 focus:ring-offset-2 focus:ring-offset-[#1e1e1e] shadow-lg hover:shadow-[#FF9027]/20"
             >
               Save Changes
             </button>
@@ -1341,7 +1487,7 @@
         >
           <div class="flex {viewMode === 'grid' ? 'flex-col gap-3' : 'gap-4'} items-start">
             <div
-              class="relative flex-shrink-0 {viewMode === 'grid'
+              class="relative shrink-0 {viewMode === 'grid'
                 ? 'w-full aspect-video'
                 : 'w-32 h-20'} rounded-lg overflow-hidden bg-[#252525] border border-[#3a3a3a] group-hover:border-[#4a4a4a] transition-colors"
             >
@@ -1354,7 +1500,7 @@
               {#if currentDownloading.status == 1}
                 <div class="absolute bottom-0 left-0 right-0 h-1.5 bg-[#2d2d2d] overflow-hidden">
                   <div
-                    class="h-full bg-gradient-to-r from-[#FF9027] to-[#FF6B00] transition-all duration-300"
+                    class="h-full bg-linear-to-r from-[#FF9027] to-[#FF6B00] transition-all duration-300"
                     style={`width: ${currentDownloading.load || 0}%`}
                   ></div>
                 </div>
@@ -1436,7 +1582,7 @@
         >
           <div class="flex {viewMode === 'grid' ? 'flex-col gap-3' : 'gap-4'} items-start">
             <div
-              class="relative flex-shrink-0 {viewMode === 'grid'
+              class="relative shrink-0 {viewMode === 'grid'
                 ? 'w-full aspect-video'
                 : 'w-32 h-20'} rounded-lg overflow-hidden bg-[#252525] border border-[#3a3a3a] group-hover:border-[#4a4a4a] transition-colors"
             >
@@ -1449,7 +1595,7 @@
               {#if item.status == 1}
                 <div class="absolute bottom-0 left-0 right-0 h-1.5 bg-[#2d2d2d] overflow-hidden">
                   <div
-                    class="h-full bg-gradient-to-r from-[#FF9027] to-[#FF6B00] transition-all duration-300"
+                    class="h-full bg-linear-to-r from-[#FF9027] to-[#FF6B00] transition-all duration-300"
                     style={`width: ${item.load || 0}%`}
                   ></div>
                 </div>
@@ -1518,12 +1664,12 @@
               {#if viewMode === 'grid'}
                 <div class="flex items-center justify-between gap-2 mb-2">
                   <span
-                    class="px-2 py-0.5 text-[10px] font-medium rounded-lg border border-opacity-20 flex-shrink-0"
+                    class="px-2 py-0.5 text-[10px] font-medium rounded-lg border border-opacity-20 shrink-0"
                     style={`background-color: ${siteColor(item.site)}10; color: ${siteColor(item.site)}; border-color: ${siteColor(item.site)}`}
                   >
                     {item.site}
                   </span>
-                  <div class="flex items-center gap-1 flex-shrink-0">
+                  <div class="flex items-center gap-1 shrink-0">
                     {#if (item.status == 1 && item.load == null) || item.status == 2 || item.status == 3}
                       <button
                         class="p-1.5 rounded-lg hover:bg-[#2d2d2d] text-gray-400 hover:text-white transition-colors"
@@ -1744,6 +1890,7 @@
           <div class="w-2/3 md:w-1/3 p-5">
             <div class="space-y-6">
               <div class="space-y-2">
+                <!-- svelte-ignore a11y_label_has_associated_control -->
                 <label class="block text-sm font-medium text-gray-300 mb-1">Quality</label>
                 <div class="relative">
                   <select
@@ -1812,7 +1959,7 @@
               <button
                 class="w-full py-3 px-4 rounded-lg font-medium text-white transition-all duration-200 flex items-center justify-center gap-2 {getdata
                   ? 'bg-[#c28851] cursor-not-allowed'
-                  : 'bg-gradient-to-r from-[#FF9027] to-[#FF6B00] hover:from-[#FF6B00] hover:to-[#FF9027] hover:shadow-lg hover:shadow-[#FF9027]/20'}"
+                  : 'bg-linear-to-r from-[#FF9027] to-[#FF6B00] hover:from-[#FF6B00] hover:to-[#FF9027] hover:shadow-lg hover:shadow-[#FF9027]/20'}"
                 disabled={getdata}
                 onclick={startDownload}
               >

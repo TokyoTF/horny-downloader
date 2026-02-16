@@ -3,7 +3,7 @@ import path from 'path'
 import ExtensionRegistry from '../../lib/ExtensionRegistry.js'
 import { is, optimizer } from '@electron-toolkit/utils'
 import sqlite3 from 'sqlite3'
-import { existsSync, mkdirSync, writeFile, unlinkSync, statSync, cpSync, readFileSync } from 'fs'
+import { existsSync, mkdirSync, writeFile, unlinkSync, statSync, cpSync, readFileSync,readdirSync } from 'fs'
 import { setupAutoUpdater } from './autoUpdater'
 import { randomUUID } from 'crypto'
 
@@ -60,17 +60,22 @@ function runFfmpegDownload(
   onCmd
 ) {
   return new Promise((resolve, reject) => {
+    const baseOpts = opts && opts.mapAudio
+      ? ['-c', 'copy', '-map', '0:v:0', '-map', '0:a:0', '-threads', local_settings.threads]
+      : ['-c', 'copy', '-map', '0:v:0', '-threads', local_settings.threads]
+
+    if (local_settings.custom_ffmpeg_params) {
+      const extra = local_settings.custom_ffmpeg_params.trim().split(/\s+/).filter(Boolean)
+      baseOpts.push(...extra)
+    }
+
     const cmd = ffmpeg()
       .input(srcUrl)
       .inputOptions([
         '-user_agent',
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
       ])
-      .outputOptions(
-        opts && opts.mapAudio
-          ? ['-c', 'copy', '-map', '0:v:0', '-map', '0:a:0', '-threads', local_settings.threads]
-          : ['-c', 'copy', '-map', '0:v:0', '-threads', local_settings.threads]
-      )
+      .outputOptions(baseOpts)
       .output(outPath)
 
     cmd.on('progress', (info) => {
@@ -220,7 +225,9 @@ ipcMain.on('revealFile', (e, v) => {
 
 ipcMain.on('openExtensionsFolder', (e) => {
   try {
-    const extPath = path.join(documentsPath, 'horny-downloader', 'extensions')
+    const extPath = is.dev 
+      ? path.join(process.cwd(), 'extensions')
+      : path.join(documentsPath, 'horny-downloader', 'extensions')
     if (!existsSync(extPath)) {
       mkdirSync(extPath, { recursive: true })
     }
@@ -296,7 +303,7 @@ async function startJob(job) {
   let outPath = ''
 
   if (local_settings.namefile_type == 'video_title') {
-    namefile = title.replace(/[^\w\s]/gi, '')
+    namefile = title.replace(/[^\w\s]/gi, '').replace(/[\n\r\t]/gm, "")
 
     const downloadDir = local_settings.download_folder || path.join(documentsPath, 'horny-downloader', 'downloads')
     if (!existsSync(downloadDir)) {
@@ -488,18 +495,7 @@ function createWindow() {
     mkdirSync(path.join(documentsPath, 'horny-downloader', 'extensions'))
   }
 
-  if (is.dev) {
-    try {
-      const srcExt = path.join(process.cwd(), 'extensions')
-      const destExt = path.join(documentsPath, 'horny-downloader', 'extensions')
-      if (existsSync(srcExt)) {
-        cpSync(srcExt, destExt, { recursive: true, force: true })
-        console.log('Extensions copied to Documents folder')
-      }
-    } catch (err) {
-      console.error('Error copying extensions:', err)
-    }
-  }
+
 
   if (!existsSync(path.join(documentsPath, 'horny-downloader', 'downloads'))) {
     mkdirSync(path.join(documentsPath, 'horny-downloader', 'downloads'))
@@ -626,24 +622,48 @@ app.whenReady().then(async () => {
     }
   })
 
+  ipcMain.handle('is-dev', () => {
+    return is.dev
+  })
+
+  ipcMain.handle('copy-extensions-to-documents', async () => {
+    if (!is.dev) return { success: false, error: 'Not in dev mode' }
+    try {
+      const srcExt = path.join(process.cwd(), 'extensions')
+      const destExt = path.join(documentsPath, 'horny-downloader', 'extensions')
+      
+      if (!existsSync(srcExt)) {
+        return { success: false, error: 'Source extensions folder not found' }
+      }
+
+      if (!existsSync(destExt)) {
+        mkdirSync(destExt, { recursive: true })
+      }
+
+      const files = readdirSync(srcExt)
+      let count = 0
+      
+      for (const file of files) {
+         if (file.endsWith('.js')) {
+            cpSync(path.join(srcExt, file), path.join(destExt, file))
+            count++
+         }
+      }
+      
+      return { success: count > 0, count }
+    } catch (error) {
+      console.error('Error copying extensions:', error)
+      return { success: false, error: error.message }
+    }
+  })
+
   ipcMain.handle('reload-extensions', async () => {
     try {
       await extensionRegistry.reloadExtensions()
       const status = await extensionRegistry.getAllExtensionsStatus()
 
 
-      if (is.dev) {
-        try {
-          const srcExt = path.join(process.cwd(), 'extensions')
-          const destExt = path.join(documentsPath, 'horny-downloader', 'extensions')
-          if (existsSync(srcExt)) {
-            cpSync(srcExt, destExt, { recursive: true, force: true })
-            console.log('Extensions copied to Documents folder')
-          }
-        } catch (err) {
-          console.error('Error copying extensions:', err)
-        }
-      }
+
 
       return status
     } catch (error) {
@@ -661,18 +681,18 @@ app.whenReady().then(async () => {
     }
   })
 
-  ipcMain.handle('check-for-extension-updates', async () => {
+  ipcMain.handle('check-for-extension-updates', async (e, branch = 'main') => {
     try {
-      return await extensionRegistry.checkForUpdates()
+      return await extensionRegistry.checkForUpdates(branch)
     } catch (error) {
       console.error('Error checking for updates:', error)
       return []
     }
   })
 
-  ipcMain.handle('update-extension', async (e, name) => {
+  ipcMain.handle('update-extension', async (e, { name, branch }) => {
     try {
-      return await extensionRegistry.updateExtension(name)
+      return await extensionRegistry.updateExtension(name, branch || 'main')
     } catch (error) {
       console.error(`Error updating extension ${name}:`, error)
       return false

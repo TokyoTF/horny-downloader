@@ -1,7 +1,7 @@
 <script>
   import { onMount } from 'svelte'
 
-  import { XIcon, ArrowUpCircle } from 'lucide-svelte'
+  import { XIcon, CircleArrowUp } from 'lucide-svelte'
   import { notifications } from './NotificationStore'
   import { updateBanner,showUpdateBanner } from './store'
 
@@ -45,8 +45,8 @@
     window.api.updater.onUpdateAvailable(handleUpdateAvailable)
 
     return () => {
-      window.api.updater.onUpdateAvailable(null)
-      window.api.updater.onUpdateDownloaded(null)
+      window.api.updater.removeUpdateAvailableListener(handleUpdateAvailable)
+      window.api.updater.removeUpdateDownloadedListener(installUpdate)
     }
   })
   updateBanner.subscribe((value) => {
@@ -61,7 +61,7 @@
   <div class="fixed bottom-4 right-4 bg-[#282828] text-white p-4 rounded-lg shadow-lg max-w-md z-50 animate-fade-in">
     <div class="flex justify-between items-start mb-2">
       <h3 class="font-bold text-lg flex items-center">
-        <ArrowUpCircle class="w-5 h-5 mr-2" />
+        <CircleArrowUp class="w-5 h-5 mr-2" />
         Update Available: v{updateInfo.version}
       </h3>
       <button

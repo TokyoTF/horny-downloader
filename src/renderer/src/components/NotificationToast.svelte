@@ -2,12 +2,11 @@
     import { flip } from 'svelte/animate';
     import { fade, fly } from 'svelte/transition';
     import { notifications } from './NotificationStore';
-    import { XIcon, CheckCircle, AlertCircle, Info } from 'lucide-svelte';
+    import { XIcon, CircleCheckBig, CircleAlert, Info } from 'lucide-svelte';
 
-    // Auto-scroll to bottom if needed, but for fixed position it's just a stack.
 </script>
 
-<div class="fixed bottom-4 right-4 z-[9999] flex flex-col gap-2 pointer-events-none">
+<div class="fixed bottom-4 right-4 z-9999 flex flex-col gap-2 pointer-events-none">
     {#each $notifications as toast (toast.id)}
         <div
             animate:flip
@@ -15,13 +14,11 @@
             out:fade={{ duration: 200 }}
             class="pointer-events-auto min-w-[300px] max-w-md bg-[#242424] border border-[#3d3d3d] text-white p-4 rounded-lg shadow-xl flex items-start gap-3 relative overflow-hidden"
         >
-            <!-- Progress/Time bar could be added here if desired -->
-            
-            <div class="flex-shrink-0 mt-0.5">
+            <div class="shrink-0 mt-0.5">
                 {#if toast.type === 'success'}
-                    <span class="text-green-500"><CheckCircle size={20} /></span>
+                    <span class="text-green-500"><CircleCheckBig size={20} /></span>
                 {:else if toast.type === 'error'}
-                    <span class="text-red-500"><AlertCircle size={20} /></span>
+                    <span class="text-red-500"><CircleAlert size={20} /></span>
                 {:else}
                     <span class="text-blue-500"><Info size={20} /></span>
                 {/if}
@@ -37,8 +34,7 @@
             >
                 <XIcon size={16} />
             </button> 
-            
-            <!-- Type-based border accent -->
+  
             <div 
                 class="absolute left-0 top-0 bottom-0 w-1"
                 class:bg-green-500={toast.type === 'success'}
