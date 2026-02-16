@@ -33,9 +33,7 @@ export default class EpornerExtension {
     const time_video = this.extension.formatDuration(duration)
 
     const reqhash = await fetch(`https://www.eporner.com/embed/${videoIdClean}/`, {
-      headers: this.extension.getDefaultHeaders({
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) horny-downloader/1.0.0 Chrome/140.0.7339.133 Electron/38.2.2 Safari/537.36'
-      })
+      headers: this.extension.getDefaultHeaders()
     })
 
     const view = await reqhash.text()
@@ -56,9 +54,7 @@ export default class EpornerExtension {
     const req_video = await fetch(
       `https://www.eporner.com/xhr/video/${videoIdClean}?hash=${conver_hash}&supportedFormats=hls&fallback=false&embed=false&_=${new Date().getTime()}`,
       {
-        headers: this.extension.getDefaultHeaders({
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) horny-downloader/1.0.0 Chrome/140.0.7339.133 Electron/38.2.2 Safari/537.36'
-        })
+        headers: this.extension.getDefaultHeaders()
       }
     )
    
@@ -66,9 +62,7 @@ export default class EpornerExtension {
     const video_test = view_video.sources.hls.auto.src
 
     const req_video_test = await fetch(video_test, {
-      headers: this.extension.getDefaultHeaders({
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) horny-downloader/1.0.0 Chrome/140.0.7339.133 Electron/38.2.2 Safari/537.36'
-      })
+      headers: this.extension.getDefaultHeaders()
     })
     const req_video_result= await req_video_test.text()
  

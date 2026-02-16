@@ -107,6 +107,7 @@ export default class NewSiteExtension {
 - Beeg
 - Eporner
 - Sxyprn
+- Bunkr
 
 ## 🛠️ Installation for dev
 

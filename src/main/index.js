@@ -72,6 +72,8 @@ function runFfmpegDownload(
     const cmd = ffmpeg()
       .input(srcUrl)
       .inputOptions([
+        '-timeout',
+        '10000000',
         '-user_agent',
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
       ])
@@ -451,7 +453,11 @@ function createWindow() {
       'http://*.eporner.com/*',
       'https://*.spankbang.com/*',
       'https://*.pornone.com/*',
-      'https://*.sxyprn.com/*'
+      'https://*.sxyprn.com/*',
+      'https://*.bunkr.cr/*',
+      'https://*.bunkr.site/*',
+      'https://*.bunkr.si/*',
+      'https://*.scdn.st/*'
     ]
   }
 
@@ -476,6 +482,11 @@ function createWindow() {
       } else if (url.includes('sxyprn.com')) {
         details.requestHeaders['Referer'] = 'https://sxyprn.com/'
         details.requestHeaders['Range'] = 'bytes=0-'
+      } else if (url.includes('bunkr.cr') || url.includes('bunkr.site') || url.includes('bunkr.si')) {
+        let siteDetect = url.includes('bunkr.site') ? 'https://bunkr.site/' : url.includes('bunkr.si') ? 'https://bunkr.si/' : 'https://bunkr.cr/'
+        details.requestHeaders['Referer'] = siteDetect
+      } else if (url.includes('scdn.st')) {
+        details.requestHeaders['Referer'] = 'https://bunkr.cr/'
       }
 
 
@@ -814,7 +825,6 @@ app.whenReady().then(async () => {
         status: videoData.status || 404,
         force_type: videoData.force_type
       }
-
       e.reply('getVideo', videoObject)
     } catch (error) {
       console.error('Error extracting video:', error)
