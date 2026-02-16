@@ -11,7 +11,7 @@ export default class SxyprnExtension {
       format_support: ['mp4'],
       vtt_support: false,
       quality_support: ['original'],
-      version: '1.0.1'
+      version: '1.0.2'
     }
     this.extension = new ExtensionExtra(this.config)
   }
