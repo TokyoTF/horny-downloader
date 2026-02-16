@@ -69,14 +69,20 @@ function runFfmpegDownload(
       baseOpts.push(...extra)
     }
 
+    const inputOpts = [
+      '-timeout',
+      '10000000',
+      '-user_agent',
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    ]
+
+    if (opts && opts.referer) {
+      inputOpts.unshift('-referer', opts.referer)
+    }
+
     const cmd = ffmpeg()
       .input(srcUrl)
-      .inputOptions([
-        '-timeout',
-        '10000000',
-        '-user_agent',
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-      ])
+      .inputOptions(inputOpts)
       .outputOptions(baseOpts)
       .output(outPath)
 
@@ -299,13 +305,13 @@ ipcMain.on('updateSettings', (e, data) => {
 
 
 async function startJob(job) {
-  const { title, format, thumb, site, url, video_src, tempid, duration, quality, localid } = job
+  const { title, format, thumb, site, url, video_src, tempid, duration, quality, localid, referer } = job
 
   let namefile = ''
   let outPath = ''
 
   if (local_settings.namefile_type == 'video_title') {
-    namefile = title.replace(/[^\w\s]/gi, '').replace(/[\n\r\t]/gm, "")
+    namefile = title.substring(0, 230).replace(/[^\w\s]/gi, '').replace(/[\n\r\t]/gm, "")
 
     const downloadDir = local_settings.download_folder || path.join(documentsPath, 'horny-downloader', 'downloads')
     if (!existsSync(downloadDir)) {
@@ -365,7 +371,7 @@ async function startJob(job) {
         }
       },
       durationSec,
-      { mapAudio: true },
+      { mapAudio: true, referer },
       (cmd) => {
         if (activeJobs[tempid]) activeJobs[tempid].cmd = cmd
       })
@@ -774,7 +780,7 @@ app.whenReady().then(async () => {
         }
 
         if (bestQualitySrc) {
-          const title = decodeURIComponent(escape(videoData.title)) || 'Unknown Title'
+          const title = decodeURIComponent(escape(videoData.title.replace(/[^a-zA-Z0-9 ]/g, ""))) || 'Unknown Title'
 
           const job = {
             title: title,
@@ -785,7 +791,8 @@ app.whenReady().then(async () => {
             video_src: bestQualitySrc,
             tempid: randomUUID(),
             duration: videoData.time || '00:00:00',
-            quality: bestQualityLabel
+            quality: bestQualityLabel,
+            referer: videoData.referer
           }
 
           await enqueueDownload(job)
@@ -799,11 +806,11 @@ app.whenReady().then(async () => {
 
 
   ipcMain.on('getCheck', async (e, v) => {
-    const { title, format, thumb, site, url, video_src, tempid, duration, quality } = v
+    const { title, format, thumb, site, url, video_src, tempid, duration, quality, referer } = v
 
     if (title && format && site && url && video_src) {
 
-      await enqueueDownload({ title, format, thumb, site, url, video_src, tempid, duration, quality })
+      await enqueueDownload({ title, format, thumb, site, url, video_src, tempid, duration, quality, referer })
     }
   })
 
@@ -816,14 +823,15 @@ app.whenReady().then(async () => {
       const videoObject = {
         url: v.url,
         site: videoData.site || 'unknown',
-        title: decodeURIComponent(escape(videoData.title)) || 'Unknown Title',
+        title: decodeURIComponent(escape(videoData.title.replace(/[^a-zA-Z0-9 ]/g, ""))) || 'Unknown Title',
         video_test: videoData.video_test || [],
         thumb: videoData.thumb || '',
         list_quality: videoData.list_quality || [],
         time: videoData.time || '0:0:0',
         embed: videoData.embed || '',
         status: videoData.status || 404,
-        force_type: videoData.force_type
+        force_type: videoData.force_type,
+        referer: videoData.referer
       }
       e.reply('getVideo', videoObject)
     } catch (error) {

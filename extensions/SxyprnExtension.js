@@ -68,7 +68,7 @@ export default class SxyprnExtension {
       embed: '',
       video_test: video_src,
       list_quality: [{ quality: 'original', url: video_src }],
-      title: title_video.replace("–","") || 'Unknown Title',
+      title: title_video.substring(0, 230).replace(/[^a-zA-Z0-9 ]/g, "").replace(/\s+/g, ' ')|| 'Unknown Title',
       time: time_video,
       thumb: thumb_video,
       status: req.status,

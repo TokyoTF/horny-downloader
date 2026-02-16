@@ -7,11 +7,11 @@ export default class PornhubExtension {
       domains_includes: ['/embed/', 'viewkey='],
       embed_preview: 'embed',
       prefix_url: 'pornhub.com',
-      referer: false,
+      referer: true,
       format_support: ['hls', 'mp4'],
       vtt_support: false,
       quality_support: ['1080', '720', '480', '240'],
-      version: '1.0.0'
+      version: '1.0.1'
     }
     this.extension = new ExtensionExtra(this.config)
     this.fetchcookie = this.extension.fetchcookies()
@@ -46,7 +46,7 @@ export default class PornhubExtension {
       embed: `https://${this.config.prefix_url}/${this.config.embed_preview}/${videoId}`,
       video_test: view_data.mediaDefinitions[0].videoUrl,
       list_quality,
-      title: view_data.video_title,
+      title: view_data.video_title.replace(/[^a-zA-Z0-9 ]/g, ""),
       time: this.extension.formatDuration(view_data.video_duration),
       thumb: view_data.image_url,
       status: req.status

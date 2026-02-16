@@ -49,6 +49,7 @@
   let getdata = $state(true)
   let video_test = $state('')
   let embed = $state('')
+  let referer = $state('')
   let sel_site = $state('auto')
   let quality_list = $state([{ url: '', quality: 'loading', size: '' }])
   let format_video = $state('mkv')
@@ -348,6 +349,7 @@
       site_video = v.site
       url_video = v.url
       embed = v.embed
+      referer = v.referer
       quality_list = v.list_quality.sort((a, b) => b.quality - a.quality)
       selected_quality = quality_list[0].url
       notifications.success('Data obtained', { duration: 2000 });
@@ -522,6 +524,7 @@
     thumb_video = ''
     title_video = ''
     embed = ''
+    referer= ''
     getdata = true
     window.electron.ipcRenderer.send('getVideo', { site: 'auto', url: url })
     notifications.info('Obtaining data', { duration: 2000 });
@@ -541,6 +544,7 @@
         load: 0,
         tempid: tempid,
         duration: toSeconds(time_video),
+        referer: referer,
         quality: quality_list.find((item) => item.url == selected_quality).quality,
         created_at: new Date().toISOString(),
         status: 0
@@ -564,6 +568,7 @@
         format: format_video,
         tempid: tempid,
         duration: time_video,
+        referer: referer,
         quality: quality_list.find((item) => item.url == selected_quality).quality
       })
       url = ''
