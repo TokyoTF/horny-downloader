@@ -3,8 +3,10 @@ import { electronAPI } from '@electron-toolkit/preload'
 
 const updater = {
     onUpdateAvailable: (callback) => ipcRenderer.on('update-available', callback),
+    removeUpdateAvailableListener: (callback) => ipcRenderer.removeListener('update-available', callback),
     checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
     onUpdateDownloaded: (callback) => ipcRenderer.on('update-downloaded', callback),
+    removeUpdateDownloadedListener: (callback) => ipcRenderer.removeListener('update-downloaded', callback),
     downloadUpdate: () => ipcRenderer.invoke('download-update'),
     restartAndUpdate: () => ipcRenderer.invoke('restart-and-update')
 };

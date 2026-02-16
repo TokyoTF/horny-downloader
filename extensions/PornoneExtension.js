@@ -1,6 +1,8 @@
 export default class PornoneExtension {
   constructor(ExtensionExtra) {
     this.config = {
+      name: 'PornOne',
+      color: '#fd4045b0',
       domains_support: ['pornone.com'],
       domains_includes: ['/'],
       embed_preview: 'embed',

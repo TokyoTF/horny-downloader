@@ -11,6 +11,6 @@ export default defineConfig({
     plugins: [externalizeDepsPlugin()]
   },
   renderer: {
-    plugins: [svelte(), vidstack(), tailwindcss()]
+    plugins: [svelte(), vidstack({ include: /player\// }), tailwindcss()]
   }
 })

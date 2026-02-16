@@ -1,6 +1,8 @@
 export default class Tube8Extension {
   constructor(ExtensionExtra) {
     this.config = {
+      name: 'Tube8',
+      color: '#00AEEFb0',
       domains_support: ['tube8.com', 'www.tube8.com'],
       domains_includes: ['/embed/', '/porn-video/'],
       embed_preview: 'embed',

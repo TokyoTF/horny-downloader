@@ -1,6 +1,8 @@
 export default class XnxxExtension {
   constructor(ExtensionExtra) {
     this.config = {
+      name: 'XNXX',
+      color: '#0B5CFFb0',
       domains_support: ['xnxx.com', 'xnxx.es'],
       domains_includes: ['/video-', '/embedframe/'],
       embed_preview: 'embedframe',

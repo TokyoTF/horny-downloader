@@ -1,6 +1,8 @@
 export default class ThumbzillaExtension {
   constructor(ExtensionExtra) {
     this.config = {
+      name: 'Thumbzilla',
+      color: '#2ECC71b0',
       domains_support: ['thumbzilla.com', 'www.thumbzilla.com'],
       domains_includes: ['/video/', '/embed/'],
       embed_preview: 'embed',

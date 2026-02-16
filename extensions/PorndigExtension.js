@@ -1,6 +1,8 @@
 export default class PorndigExtension {
   constructor(ExtensionExtra) {
     this.config = {
+      name: 'Porndig',
+      color: '#7E57C2b0',
       domains_support: ['porndig.com'],
       domains_includes: ['/videos/'],
       embed_preview: '',

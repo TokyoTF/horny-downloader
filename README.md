@@ -60,6 +60,8 @@ Extension files must:
 export default class NewSiteExtension {
   constructor(ExtensionExtra) {
     this.config = {
+      name: 'NewSite',
+      color: '#000000',
       domains_support: ['example.com'],
       domains_includes: ['/video/', '/watch/'],
       embed_preview: 'embed',
@@ -104,6 +106,8 @@ export default class NewSiteExtension {
 - PornOne
 - Beeg
 - Eporner
+- Sxyprn
+- Bunkr
 
 ## 🛠️ Installation for dev
 
