@@ -233,7 +233,7 @@ ipcMain.on('revealFile', (e, v) => {
 
 ipcMain.on('openExtensionsFolder', (e) => {
   try {
-    const extPath = is.dev 
+    const extPath = is.dev
       ? path.join(process.cwd(), 'extensions')
       : path.join(documentsPath, 'horny-downloader', 'extensions')
     if (!existsSync(extPath)) {
@@ -463,7 +463,8 @@ function createWindow() {
       'https://*.bunkr.cr/*',
       'https://*.bunkr.site/*',
       'https://*.bunkr.si/*',
-      'https://*.scdn.st/*'
+      'https://*.scdn.st/*',
+      'https://*.pimpbunny.com/*'
     ]
   }
 
@@ -485,6 +486,8 @@ function createWindow() {
         details.requestHeaders['Referer'] = 'https://spankbang.com/'
       } else if (url.includes('pornone.com')) {
         details.requestHeaders['Referer'] = 'https://pornone.com/'
+      } else if (url.includes('pimpbunny.com')) {
+        details.requestHeaders['Referer'] = 'https://pimpbunny.com/'
       } else if (url.includes('sxyprn.com')) {
         details.requestHeaders['Referer'] = 'https://sxyprn.com/'
         details.requestHeaders['Range'] = 'bytes=0-'
@@ -648,7 +651,7 @@ app.whenReady().then(async () => {
     try {
       const srcExt = path.join(process.cwd(), 'extensions')
       const destExt = path.join(documentsPath, 'horny-downloader', 'extensions')
-      
+
       if (!existsSync(srcExt)) {
         return { success: false, error: 'Source extensions folder not found' }
       }
@@ -659,14 +662,14 @@ app.whenReady().then(async () => {
 
       const files = readdirSync(srcExt)
       let count = 0
-      
+
       for (const file of files) {
          if (file.endsWith('.js')) {
             cpSync(path.join(srcExt, file), path.join(destExt, file))
             count++
          }
       }
-      
+
       return { success: count > 0, count }
     } catch (error) {
       console.error('Error copying extensions:', error)
