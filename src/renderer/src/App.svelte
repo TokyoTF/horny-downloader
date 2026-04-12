@@ -1,17 +1,28 @@
 <script>
   import { onMount } from 'svelte'
-  
+
   import Player from './components/player/Player.svelte'
   import NotificationToast from './components/NotificationToast.svelte'
   import UpdateNotification from './components/UpdateNotification.svelte'
   import { updateBanner, showUpdateBanner } from './components/store'
   import { notifications } from './components/NotificationStore'
-  
+
   // --- Icons & Assets ---
   import {
-    ClipboardIcon, FolderIcon, XIcon, MinusIcon, SquareIcon, SettingsIcon,
-    TriangleAlertIcon, SearchIcon, LayoutGrid, List, ArrowDownWideNarrow,
-    ArrowUpNarrowWide, FileText, RefreshCw
+    ClipboardIcon,
+    FolderIcon,
+    XIcon,
+    MinusIcon,
+    SquareIcon,
+    SettingsIcon,
+    TriangleAlertIcon,
+    SearchIcon,
+    LayoutGrid,
+    List,
+    ArrowDownWideNarrow,
+    ArrowUpNarrowWide,
+    FileText,
+    RefreshCw
   } from 'lucide-svelte'
   import LogoIcon from './assets/logo.png'
 
@@ -60,7 +71,7 @@
   let site_video = ''
   let url_video = $state('')
   let window_video = $state(false)
-  
+
   // --- UI State ---
   let searchQuery = $state('')
   let searchType = $state('title')
@@ -75,12 +86,13 @@
   let batchUrls = $state([])
   let batchQuality = $state('max')
   let batchDelay = $state(4000)
+  let batchProgress = $state({ total: 0, processed: 0, remaining: 0 })
 
   // --- Derived State ---
   let currentDownloading = $derived(
-    (locallist
+    locallist
       .filter((it) => it.status === 1)
-      .sort((a, b) => parseCreatedAt(b.created_at) - parseCreatedAt(a.created_at)))[0] || null
+      .sort((a, b) => parseCreatedAt(b.created_at) - parseCreatedAt(a.created_at))[0] || null
   )
 
   let filteredList = $derived(
@@ -136,7 +148,9 @@
         settings = { ...settings, ...parsed }
         if (parsed.default_format) format_video = parsed.default_format
       }
-    } catch(e) { console.error('Error parsing settings:', e) }
+    } catch (e) {
+      console.error('Error parsing settings:', e)
+    }
 
     // Check settings prompt immediately
     checkRequiredSettings()
@@ -178,7 +192,7 @@
   })
 
   // --- IPC Handlers ---
-  
+
   function setupIpcListeners() {
     removeIpcListeners()
     window.electron.ipcRenderer.on('getList', handleGetList)
@@ -186,6 +200,7 @@
     window.electron.ipcRenderer.on('getProgress', handleGetProgress)
     window.electron.ipcRenderer.on('getVideo', handleGetVideo)
     window.electron.ipcRenderer.on('deletedItem', handleDeletedItem)
+    window.electron.ipcRenderer.on('batch-progress', handleBatchProgress)
   }
 
   function removeIpcListeners() {
@@ -194,16 +209,22 @@
     window.electron.ipcRenderer.removeAllListeners('getProgress')
     window.electron.ipcRenderer.removeAllListeners('getVideo')
     window.electron.ipcRenderer.removeAllListeners('deletedItem')
+    window.electron.ipcRenderer.removeAllListeners('batch-progress')
+  }
+
+  const handleBatchProgress = (e, v) => {
+    batchProgress = v
   }
 
   const handleGetList = (e, v) => {
     const newList = v.sort((a, b) => parseCreatedAt(b.created_at) - parseCreatedAt(a.created_at))
-    
-    locallist = newList.map(item => {
-      const existing = locallist.find(it => 
-        (item.id && it.id === item.id) || 
-        (item.tempid && it.tempid === item.tempid) ||
-        (item.url === it.url && item.status === it.status)
+
+    locallist = newList.map((item) => {
+      const existing = locallist.find(
+        (it) =>
+          (item.id && it.id === item.id) ||
+          (item.tempid && it.tempid === item.tempid) ||
+          (item.url === it.url && item.status === it.status)
       )
 
       const thumb = item.thumb
@@ -213,14 +234,14 @@
           ...existing,
           ...item,
           thumb,
-          load: item.status === 1 ? (existing.load ?? 0) : (item.status === 2 ? 100 : 0)
+          load: item.status === 1 ? (existing.load ?? 0) : item.status === 2 ? 100 : 0
         }
       }
       return { ...item, thumb, load: item.status === 2 ? 100 : 0 }
     })
 
     if (isInitialLoad) {
-      notifications.success('The list loaded successfully', { duration: 1500 });
+      notifications.success('The list loaded successfully', { duration: 1500 })
       console.timeEnd('LoadingList')
       isInitialLoad = false
       checkForUpdates()
@@ -257,17 +278,15 @@
   const handleGetVideo = (e, v) => {
     getdata = true
     if (v.error) {
-      notifications.error('Failed to get video data', { duration: 2000 });
+      notifications.error('Failed to get video data', { duration: 2000 })
       return
     }
     updateList(v)
   }
 
   const handleDeletedItem = (e, { id }) => {
-    notifications.success('Item removed', { duration: 2000 });
+    notifications.success('Item removed', { duration: 2000 })
   }
-
-
 
   // --- Helper Functions ---
 
@@ -329,9 +348,9 @@
 
   function copytext(text) {
     navigator.clipboard.writeText(text)
-    notifications.success('copied url', { duration: 2500 });
+    notifications.success('copied url', { duration: 2500 })
   }
-  
+
   function siteColor(site) {
     const color = sites.find((it) => it.value.toLowerCase() === site.toLowerCase())?.color
     if (color) {
@@ -352,7 +371,7 @@
       referer = v.referer
       quality_list = v.list_quality.sort((a, b) => b.quality - a.quality)
       selected_quality = quality_list[0].url
-      notifications.success('Data obtained', { duration: 2000 });
+      notifications.success('Data obtained', { duration: 2000 })
       setTimeout(() => {
         getdata = false
       }, 1500)
@@ -392,7 +411,7 @@
   function saveSettings() {
     localStorage.setItem('app_settings', JSON.stringify(settings))
     window.electron.ipcRenderer.send('updateSettings', JSON.stringify(settings))
-    notifications.success('Settings saved', { duration: 2000 });
+    notifications.success('Settings saved', { duration: 2000 })
     settings_open = false
   }
 
@@ -410,7 +429,7 @@
       dev_auto_sync: false,
       custom_ffmpeg_params: ''
     }
-    notifications.success('LocalStorage cleared and settings reset', { duration: 2000 });
+    notifications.success('LocalStorage cleared and settings reset', { duration: 2000 })
   }
 
   function UpdateStateApp(s) {
@@ -431,36 +450,33 @@
   }
 
   function updateSitesList() {
-      const loadedSites = []
-      if (extensions_status && extensions_status.loaded) {
-        Object.values(extensions_status.loaded).forEach((ext) => {
-          if (ext && ext.config && ext.config.name) {
-            loadedSites.push({
-              value: ext.config.name,
-              label: ext.config.name,
-              color: ext.config.color,
-              requiresExtension: true
-            })
-          }
-        })
-      }
+    const loadedSites = []
+    if (extensions_status && extensions_status.loaded) {
+      Object.values(extensions_status.loaded).forEach((ext) => {
+        if (ext && ext.config && ext.config.name) {
+          loadedSites.push({
+            value: ext.config.name,
+            label: ext.config.name,
+            color: ext.config.color,
+            requiresExtension: true
+          })
+        }
+      })
+    }
 
-      loadedSites.sort((a, b) => a.label.localeCompare(b.label))
+    loadedSites.sort((a, b) => a.label.localeCompare(b.label))
 
-      sites = [
-        { value: 'auto', label: 'Auto Detect', requiresExtension: false },
-        ...loadedSites
-      ]
+    sites = [{ value: 'auto', label: 'Auto Detect', requiresExtension: false }, ...loadedSites]
   }
 
   async function reloadExtensions() {
-    notifications.info('Reloading extensions...', { duration: 1500 });
+    notifications.info('Reloading extensions...', { duration: 1500 })
     try {
-        extensions_status = await window.electron.ipcRenderer.invoke('reload-extensions')
-        updateSitesList() 
-        notifications.success('Extensions reloaded', { duration: 2000 });
+      extensions_status = await window.electron.ipcRenderer.invoke('reload-extensions')
+      updateSitesList()
+      notifications.success('Extensions reloaded', { duration: 2000 })
     } catch (e) {
-        notifications.error('Failed to reload extensions');
+      notifications.error('Failed to reload extensions')
     }
   }
 
@@ -471,9 +487,14 @@
   async function checkForUpdates() {
     isCheckingUpdates = true
     try {
-      availableUpdates = await window.electron.ipcRenderer.invoke('check-for-extension-updates', settings.extension_branch || 'main')
+      availableUpdates = await window.electron.ipcRenderer.invoke(
+        'check-for-extension-updates',
+        settings.extension_branch || 'main'
+      )
       if (availableUpdates.length > 0) {
-        notifications.info(`${availableUpdates.length} extension updates available`, { duration: 3000 })
+        notifications.info(`${availableUpdates.length} extension updates available`, {
+          duration: 3000
+        })
       }
     } catch (error) {
       console.error('Error checking for updates:', error)
@@ -485,12 +506,15 @@
   async function updateExtension(extension) {
     try {
       notifications.info(`Updating ${extension.name}...`, { duration: 2000 })
-      const success = await window.electron.ipcRenderer.invoke('update-extension', { name: extension.name, branch: settings.extension_branch || 'main' })
+      const success = await window.electron.ipcRenderer.invoke('update-extension', {
+        name: extension.name,
+        branch: settings.extension_branch || 'main'
+      })
       if (success) {
         notifications.success(`Updated ${extension.name} successfully`, { duration: 2000 })
 
-        availableUpdates = availableUpdates.filter(u => u.name !== extension.name)
-        
+        availableUpdates = availableUpdates.filter((u) => u.name !== extension.name)
+
         await reloadExtensions()
       } else {
         notifications.error(`Failed to update ${extension.name}`)
@@ -504,7 +528,9 @@
     try {
       const result = await window.electron.ipcRenderer.invoke('copy-extensions-to-documents')
       if (result.success) {
-        notifications.success(`Synced ${result.count || 0} extensions to Documents`, { duration: 2000 })
+        notifications.success(`Synced ${result.count || 0} extensions to Documents`, {
+          duration: 2000
+        })
         await reloadExtensions()
       } else {
         notifications.error(result.error || 'Failed to sync extensions')
@@ -524,15 +550,14 @@
     thumb_video = ''
     title_video = ''
     embed = ''
-    referer= ''
+    referer = ''
     getdata = true
     window.electron.ipcRenderer.send('getVideo', { site: 'auto', url: url })
-    notifications.info('Obtaining data', { duration: 2000 });
+    notifications.info('Obtaining data', { duration: 2000 })
   }
 
   function startDownload() {
     if (getdata == false) {
-      
       const tempid = crypto.randomUUID()
       const newItem = {
         title: title_video,
@@ -573,7 +598,7 @@
       })
       url = ''
       window.document.querySelector('.scroll').scrollTo({ top: 0 })
-      notifications.success('Starting Download', { duration: 3000 });
+      notifications.success('Starting Download', { duration: 3000 })
     }
   }
 
@@ -581,7 +606,7 @@
     const key = item.id ?? item.tempid
     if (item.status === 1) {
       try {
-        notifications.success('Download cancelled', { duration: 2000 });
+        notifications.success('Download cancelled', { duration: 2000 })
         window.electron.ipcRenderer.send('cancelDownload', { id: item.id ?? item.tempid })
       } catch {}
     }
@@ -600,28 +625,32 @@
         batchQuality = 'max'
         batchDelay = 4000
       } else if (result.error) {
-        notifications.error('Error reading file');
+        notifications.error('Error reading file')
       }
     } catch {
-      notifications.error('Failed to open file');
+      notifications.error('Failed to open file')
     }
   }
 
   async function startBatchProcessing() {
     batchModalOpen = false
     try {
-      const args = JSON.parse(JSON.stringify({
-        urls: batchUrls,
-        quality: batchQuality,
-        delay: batchDelay
-      }))
+      const args = JSON.parse(
+        JSON.stringify({
+          urls: batchUrls,
+          quality: batchQuality,
+          delay: batchDelay
+        })
+      )
 
       await window.electron.ipcRenderer.invoke('start-batch-download', args)
-      
-      notifications.success(`Processing ${batchUrls.length} links in background...`, { duration: 3000 });
+
+      notifications.success(`Processing ${batchUrls.length} links in background...`, {
+        duration: 3000
+      })
     } catch (err) {
-       console.error(err)
-        notifications.error('Failed to start batch');
+      console.error(err)
+      notifications.error('Failed to start batch')
     }
   }
 </script>
@@ -661,10 +690,12 @@
     <div class="bg-[#252525] rounded-lg shadow-xl max-w-sm w-full p-6 border border-[#3d3d3d]">
       <h3 class="text-lg font-semibold text-white mb-1">Batch Import</h3>
       <p class="text-gray-400 text-sm mb-4">Found {batchUrls.length} links to process.</p>
-      
+
       <div class="space-y-4">
         <div>
-          <label for="quality" class="text-xs font-medium text-gray-300 block mb-1.5">Video Quality</label>
+          <label for="quality" class="text-xs font-medium text-gray-300 block mb-1.5"
+            >Video Quality</label
+          >
           <select
             id="quality"
             bind:value={batchQuality}
@@ -677,7 +708,9 @@
         </div>
 
         <div>
-          <label for="delay" class="text-xs font-medium text-gray-300 block mb-1.5">Delay between downloads (ms)</label>
+          <label for="delay" class="text-xs font-medium text-gray-300 block mb-1.5"
+            >Delay between downloads (ms)</label
+          >
           <input
             type="number"
             id="delay"
@@ -831,8 +864,6 @@
     </div>
 
     <div class="flex items-center gap-2">
-
-
       <button
         class="px-5 py-2.5 bg-linear-to-r from-[#FF9027] to-[#FF6B00] disabled:from-[#FF9027] disabled:to-[#FF6B00] disabled:opacity-50 disabled:cursor-not-allowed hover:from-[#FF9C3F] hover:to-[#FF7B1C] text-white font-medium rounded-lg flex items-center gap-2 transition-all duration-200 transform hover:scale-105 active:scale-95 focus:outline-none shadow-lg hover:shadow-[#FF9027]/20"
         onclick={getVideo}
@@ -871,158 +902,155 @@
         <SettingsIcon size="20" class="text-gray-300 hover:text-white transition-colors" />
       </button>
     </div>
-    
   </div>
 
-      <div class="relative w-full max-w-4xl flex items-center gap-2">
-        <div class="relative">
-          <select
-            bind:value={searchType}
-            class="appearance-none bg-[#1B1B1B] border-2 border-[#2d2d2d] hover:border-[#3d3d3d] focus:border-[#FF9027] focus:ring-1 focus:ring-[#FF9027]/50 rounded-lg pl-3 pr-7 py-1.5 text-xs font-medium text-gray-300 transition-all cursor-pointer outline-none"
-          >
-            <option value="title">Title</option>
-            <option value="url">URL</option>
-          </select>
-          <div class="absolute inset-y-0 right-0 flex items-center pr-2 pointer-events-none">
-            <svg
-              class="h-3 w-3 text-gray-400"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="2"
-                d="M19 9l-7 7-7-7"
-              />
-            </svg>
-          </div>
-        </div>
-
-        <div class="relative flex-1">
-          <div class="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
-            <SearchIcon class="h-3.5 w-3.5 text-gray-400" />
-          </div>
-          <input
-            class="w-full bg-[#1B1B1B] pl-9 pr-8 py-1.5 border-2 border-[#2d2d2d] hover:border-[#3d3d3d] focus:border-[#FF9027] focus:ring-1 focus:ring-[#FF9027]/50 rounded-lg outline-none transition-all duration-200 text-xs font-medium placeholder-gray-500"
-            type="text"
-            placeholder={searchType === 'url' ? 'Search by URL...' : 'Search by Title...'}
-            bind:value={searchQuery}
+  <div class="relative w-full max-w-4xl flex items-center gap-2">
+    <div class="relative">
+      <select
+        bind:value={searchType}
+        class="appearance-none bg-[#1B1B1B] border-2 border-[#2d2d2d] hover:border-[#3d3d3d] focus:border-[#FF9027] focus:ring-1 focus:ring-[#FF9027]/50 rounded-lg pl-3 pr-7 py-1.5 text-xs font-medium text-gray-300 transition-all cursor-pointer outline-none"
+      >
+        <option value="title">Title</option>
+        <option value="url">URL</option>
+      </select>
+      <div class="absolute inset-y-0 right-0 flex items-center pr-2 pointer-events-none">
+        <svg class="h-3 w-3 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="2"
+            d="M19 9l-7 7-7-7"
           />
-          {#if searchQuery}
-            <!-- svelte-ignore a11y_consider_explicit_label -->
-            <button
-              onclick={() => (searchQuery = '')}
-              class="absolute inset-y-0 right-0 flex items-center pr-2.5 text-gray-400 hover:text-white transition-colors"
-            >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                class="h-3.5 w-3.5"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="2"
-                  d="M6 18L18 6M6 6l12 12"
-                />
-              </svg>
-            </button>
-          {/if}
-        </div>
-
-        <div class="relative ml-1">
-          <select
-            bind:value={sortType}
-            class="appearance-none bg-[#1B1B1B] border-2 border-[#2d2d2d] hover:border-[#3d3d3d] focus:border-[#FF9027] focus:ring-1 focus:ring-[#FF9027]/50 rounded-lg pl-8 pr-6 py-1.5 text-xs font-medium text-gray-300 transition-all cursor-pointer outline-none"
-          >
-            <option value="date">Date</option>
-            <option value="size">Size</option>
-            <option value="time">Time</option>
-            <option value="quality">Quality</option>
-          </select>
-          <div class="absolute inset-y-0 left-0 flex items-center pl-2.5 pointer-events-none">
-            {#if sortDirection === 'asc'}
-              <ArrowUpNarrowWide class="h-3.5 w-3.5 text-gray-400" />
-            {:else}
-              <ArrowDownWideNarrow class="h-3.5 w-3.5 text-gray-400" />
-            {/if}
-          </div>
-          <div class="absolute inset-y-0 right-0 flex items-center pr-1.5 pointer-events-none">
-            <svg
-              class="h-3 w-3 text-gray-400"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="2"
-                d="M19 9l-7 7-7-7"
-              />
-            </svg>
-          </div>
-        </div>
-
-        <button
-          onclick={() => (sortDirection = sortDirection === 'asc' ? 'desc' : 'asc')}
-          class="p-1.5 ml-1 rounded-lg bg-[#1B1B1B] border-2 border-[#2d2d2d] hover:border-[#3d3d3d] text-gray-400 hover:text-white transition-all duration-200"
-          title={sortDirection === 'asc' ? 'Sort Ascending' : 'Sort Descending'}
-        >
-          {#if sortDirection === 'asc'}
-            <ArrowUpNarrowWide class="w-4 h-4" />
-          {:else}
-            <ArrowDownWideNarrow class="w-4 h-4" />
-          {/if}
-        </button>
-
-        <div class="flex bg-[#1B1B1B] rounded-lg border-2 border-[#2d2d2d] p-0.5 shrink-0 ml-1">
-          <button
-            onclick={() => (activeTab = 'all')}
-            class="p-1.5 rounded-md transition-all text-xs duration-200 {activeTab === 'all'
-              ? 'bg-[#2d2d2d] text-white shadow-sm'
-              : 'text-gray-400 hover:text-white hover:bg-[#2d2d2d]/50'}"
-            title="Show all"
-          >
-            All
-          </button>
-          <button
-            onclick={() => (activeTab = 'downloading')}
-            class="p-1.5 rounded-md transition-all text-xs duration-200 {activeTab === 'downloading'
-              ? 'bg-[#2d2d2d] text-white shadow-sm'
-              : 'text-gray-400 hover:text-white hover:bg-[#2d2d2d]/50'}"
-            title="Show downloading"
-          >
-            Downloading
-          </button>
-        </div>
-
-        <div class="flex bg-[#1B1B1B] rounded-lg border-2 border-[#2d2d2d] p-0.5 shrink-0 ml-1">
-          <button
-            onclick={() => (viewMode = 'list')}
-            class="p-1.5 rounded-md transition-all duration-200 {viewMode === 'list'
-              ? 'bg-[#2d2d2d] text-white shadow-sm'
-              : 'text-gray-400 hover:text-white hover:bg-[#2d2d2d]/50'}"
-            title="List View"
-          >
-            <List class="w-3.5 h-3.5" />
-          </button>
-          <button
-            onclick={() => (viewMode = 'grid')}
-            class="p-1.5 rounded-md transition-all duration-200 {viewMode === 'grid'
-              ? 'bg-[#2d2d2d] text-white shadow-sm'
-              : 'text-gray-400 hover:text-white hover:bg-[#2d2d2d]/50'}"
-            title="Grid View"
-          >
-            <LayoutGrid class="w-3.5 h-3.5" />
-          </button>
-        </div>
+        </svg>
       </div>
-    
+    </div>
+
+    <div class="relative flex-1">
+      <div class="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
+        <SearchIcon class="h-3.5 w-3.5 text-gray-400" />
+      </div>
+      <input
+        class="w-full bg-[#1B1B1B] pl-9 pr-8 py-1.5 border-2 border-[#2d2d2d] hover:border-[#3d3d3d] focus:border-[#FF9027] focus:ring-1 focus:ring-[#FF9027]/50 rounded-lg outline-none transition-all duration-200 text-xs font-medium placeholder-gray-500"
+        type="text"
+        placeholder={searchType === 'url' ? 'Search by URL...' : 'Search by Title...'}
+        bind:value={searchQuery}
+      />
+      {#if searchQuery}
+        <!-- svelte-ignore a11y_consider_explicit_label -->
+        <button
+          onclick={() => (searchQuery = '')}
+          class="absolute inset-y-0 right-0 flex items-center pr-2.5 text-gray-400 hover:text-white transition-colors"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            class="h-3.5 w-3.5"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M6 18L18 6M6 6l12 12"
+            />
+          </svg>
+        </button>
+      {/if}
+    </div>
+
+    <div class="relative ml-1">
+      <select
+        bind:value={sortType}
+        class="appearance-none bg-[#1B1B1B] border-2 border-[#2d2d2d] hover:border-[#3d3d3d] focus:border-[#FF9027] focus:ring-1 focus:ring-[#FF9027]/50 rounded-lg pl-8 pr-6 py-1.5 text-xs font-medium text-gray-300 transition-all cursor-pointer outline-none"
+      >
+        <option value="date">Date</option>
+        <option value="size">Size</option>
+        <option value="time">Time</option>
+        <option value="quality">Quality</option>
+      </select>
+      <div class="absolute inset-y-0 left-0 flex items-center pl-2.5 pointer-events-none">
+        {#if sortDirection === 'asc'}
+          <ArrowUpNarrowWide class="h-3.5 w-3.5 text-gray-400" />
+        {:else}
+          <ArrowDownWideNarrow class="h-3.5 w-3.5 text-gray-400" />
+        {/if}
+      </div>
+      <div class="absolute inset-y-0 right-0 flex items-center pr-1.5 pointer-events-none">
+        <svg class="h-3 w-3 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="2"
+            d="M19 9l-7 7-7-7"
+          />
+        </svg>
+      </div>
+    </div>
+
+    <button
+      onclick={() => (sortDirection = sortDirection === 'asc' ? 'desc' : 'asc')}
+      class="p-1.5 ml-1 rounded-lg bg-[#1B1B1B] border-2 border-[#2d2d2d] hover:border-[#3d3d3d] text-gray-400 hover:text-white transition-all duration-200"
+      title={sortDirection === 'asc' ? 'Sort Ascending' : 'Sort Descending'}
+    >
+      {#if sortDirection === 'asc'}
+        <ArrowUpNarrowWide class="w-4 h-4" />
+      {:else}
+        <ArrowDownWideNarrow class="w-4 h-4" />
+      {/if}
+    </button>
+
+    <div class="flex bg-[#1B1B1B] rounded-lg border-2 border-[#2d2d2d] p-0.5 shrink-0 ml-1">
+      <button
+        onclick={() => (activeTab = 'all')}
+        class="p-1.5 rounded-md transition-all text-xs duration-200 {activeTab === 'all'
+          ? 'bg-[#2d2d2d] text-white shadow-sm'
+          : 'text-gray-400 hover:text-white hover:bg-[#2d2d2d]/50'}"
+        title="Show all"
+      >
+        All
+      </button>
+      <button
+        onclick={() => (activeTab = 'downloading')}
+        class="p-1.5 rounded-md transition-all text-xs duration-200 {activeTab === 'downloading'
+          ? 'bg-[#2d2d2d] text-white shadow-sm'
+          : 'text-gray-400 hover:text-white hover:bg-[#2d2d2d]/50'}"
+        title="Show downloading"
+      >
+        Downloading
+      </button>
+    </div>
+
+    {#if activeTab === 'downloading' && batchProgress.remaining > 0}
+      <div class="ml-2 text-xs text-gray-400 flex items-center gap-1.5">
+        <span class="text-orange-400">{batchProgress.processed}</span>
+        <span>/</span>
+        <span>{batchProgress.total}</span>
+        <span class="text-gray-500">remaining</span>
+      </div>
+    {/if}
+
+    <div class="flex bg-[#1B1B1B] rounded-lg border-2 border-[#2d2d2d] p-0.5 shrink-0 ml-1">
+      <button
+        onclick={() => (viewMode = 'list')}
+        class="p-1.5 rounded-md transition-all duration-200 {viewMode === 'list'
+          ? 'bg-[#2d2d2d] text-white shadow-sm'
+          : 'text-gray-400 hover:text-white hover:bg-[#2d2d2d]/50'}"
+        title="List View"
+      >
+        <List class="w-3.5 h-3.5" />
+      </button>
+      <button
+        onclick={() => (viewMode = 'grid')}
+        class="p-1.5 rounded-md transition-all duration-200 {viewMode === 'grid'
+          ? 'bg-[#2d2d2d] text-white shadow-sm'
+          : 'text-gray-400 hover:text-white hover:bg-[#2d2d2d]/50'}"
+        title="Grid View"
+      >
+        <LayoutGrid class="w-3.5 h-3.5" />
+      </button>
+    </div>
+  </div>
 </div>
 
 <main class="h-full flex flex-col justify-center items-center text-sm">
@@ -1269,7 +1297,10 @@
                 </div>
 
                 <div class="space-y-1.5">
-                  <label for="setting-custom-ffmpeg" class="block text-sm font-medium text-gray-200">
+                  <label
+                    for="setting-custom-ffmpeg"
+                    class="block text-sm font-medium text-gray-200"
+                  >
                     Custom FFmpeg Params
                     <span class="ml-1 text-xs text-gray-400 font-normal">(Advanced)</span>
                   </label>
@@ -1280,36 +1311,42 @@
                     class="w-full px-3.5 py-2 bg-[#252525] border border-[#3a3a3a] hover:border-[#4a4a4a] focus:border-[#FF9027] focus:ring-2 focus:ring-[#FF9027]/30 rounded-lg text-sm text-white transition-all duration-200 resize-none font-mono placeholder-gray-500"
                     placeholder="e.g. -preset fast -crf 23"
                   ></textarea>
-                  <p class="text-xs text-gray-500">FFmpeg output flags appended to every download.</p>
+                  <p class="text-xs text-gray-500">
+                    FFmpeg output flags appended to every download.
+                  </p>
                 </div>
 
                 {#if isDev}
-                <div class="space-y-1.5 border-t border-[#3a3a3a] pt-4 mt-2">
-                    <h4 class="text-xs font-semibold text-purple-400 uppercase tracking-wide mb-3">Developer Settings</h4>
+                  <div class="space-y-1.5 border-t border-[#3a3a3a] pt-4 mt-2">
+                    <h4 class="text-xs font-semibold text-purple-400 uppercase tracking-wide mb-3">
+                      Developer Settings
+                    </h4>
                     <div class="flex items-center justify-between">
-                        <label for="dev-auto-sync" class="text-sm font-medium text-gray-200">
-                            Auto-sync extensions
-                            <span class="ml-1 text-xs text-gray-400 font-normal block">Sync project extensions to Documents</span>
-                        </label>
-                        <label class="relative inline-flex items-center cursor-pointer">
-                            <input
-                                type="checkbox"
-                                id="dev-auto-sync"
-                                checked={settings.dev_auto_sync}
-                                onchange={(e) => {
-                                    settings.dev_auto_sync = e.currentTarget.checked;
-                                    if(settings.dev_auto_sync) syncExtensions();
-                                }}
-                                class="sr-only peer"
-                            />
-                            <div
-                                class="w-9 h-5 bg-gray-700 rounded-full peer peer-checked:after:translate-x-4 peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-purple-600"
-                            ></div>
-                        </label>
+                      <label for="dev-auto-sync" class="text-sm font-medium text-gray-200">
+                        Auto-sync extensions
+                        <span class="ml-1 text-xs text-gray-400 font-normal block"
+                          >Sync project extensions to Documents</span
+                        >
+                      </label>
+                      <label class="relative inline-flex items-center cursor-pointer">
+                        <input
+                          type="checkbox"
+                          id="dev-auto-sync"
+                          checked={settings.dev_auto_sync}
+                          onchange={(e) => {
+                            settings.dev_auto_sync = e.currentTarget.checked
+                            if (settings.dev_auto_sync) syncExtensions()
+                          }}
+                          class="sr-only peer"
+                        />
+                        <div
+                          class="w-9 h-5 bg-gray-700 rounded-full peer peer-checked:after:translate-x-4 peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-purple-600"
+                        ></div>
+                      </label>
                     </div>
-                </div>
+                  </div>
                 {/if}
-              <div class="space-y-1.5">
+                <div class="space-y-1.5">
                   <label for="setting-branch" class="block text-sm font-medium text-gray-200">
                     Extension Branch
                     <span class="ml-1 text-xs text-gray-400 font-normal">(For updates)</span>
@@ -1347,36 +1384,39 @@
 
             {#if availableUpdates.length > 0}
               <div class="space-y-4">
-                  <div class="flex items-center justify-between">
-                    <h3 class="text-sm font-medium text-gray-300 uppercase tracking-wider">
-                      Available Updates ({availableUpdates.length})
-                    </h3>
-                  </div>
-                  <div class="space-y-3">
-                    {#each availableUpdates as update}
-                      <div class="flex items-center justify-between p-3 bg-[#252525] rounded-lg border border-orange-500/30">
-                        <div class="flex items-center gap-3">
-                          <div class="w-2 h-2 bg-orange-500 rounded-full animate-pulse"></div>
-                          <div>
-                            <p class="text-sm font-medium text-white">
-                              {update.name.replace('Extension', '')}
-                            </p>
-                            <p class="text-xs text-gray-400">
-                              v{update.currentVersion} → <span class="text-green-400">v{update.newVersion}</span>
-                            </p>
-                          </div>
-                        </div>
-                         <button
-                            onclick={() => updateExtension(update)}
-                            class="px-3 py-1.5 bg-orange-600 hover:bg-orange-700 text-white text-xs font-medium rounded transition-colors"
-                          >
-                            Update
-                          </button>
-                      </div>
-                    {/each}
-                  </div>
+                <div class="flex items-center justify-between">
+                  <h3 class="text-sm font-medium text-gray-300 uppercase tracking-wider">
+                    Available Updates ({availableUpdates.length})
+                  </h3>
                 </div>
-                <div class="w-full h-px bg-[#3a3a3a] my-4"></div>
+                <div class="space-y-3">
+                  {#each availableUpdates as update}
+                    <div
+                      class="flex items-center justify-between p-3 bg-[#252525] rounded-lg border border-orange-500/30"
+                    >
+                      <div class="flex items-center gap-3">
+                        <div class="w-2 h-2 bg-orange-500 rounded-full animate-pulse"></div>
+                        <div>
+                          <p class="text-sm font-medium text-white">
+                            {update.name.replace('Extension', '')}
+                          </p>
+                          <p class="text-xs text-gray-400">
+                            v{update.currentVersion} →
+                            <span class="text-green-400">v{update.newVersion}</span>
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        onclick={() => updateExtension(update)}
+                        class="px-3 py-1.5 bg-orange-600 hover:bg-orange-700 text-white text-xs font-medium rounded transition-colors"
+                      >
+                        Update
+                      </button>
+                    </div>
+                  {/each}
+                </div>
+              </div>
+              <div class="w-full h-px bg-[#3a3a3a] my-4"></div>
             {/if}
 
             <div class="space-y-4">
@@ -1394,9 +1434,9 @@
                   Open Folder
                 </button>
                 <button
-                   onclick={reloadExtensions}
-                   class="text-xs text-[#FF9027] hover:text-[#FF6B00] font-medium flex items-center gap-1.5 transition-colors px-2 py-1 rounded hover:bg-[#FF9027]/10"
-                   title="Reload Extensions"
+                  onclick={reloadExtensions}
+                  class="text-xs text-[#FF9027] hover:text-[#FF6B00] font-medium flex items-center gap-1.5 transition-colors px-2 py-1 rounded hover:bg-[#FF9027]/10"
+                  title="Reload Extensions"
                 >
                   <RefreshCw size={14} />
                   Reload
@@ -1480,7 +1520,6 @@
   {/if}
 
   <div class="w-full flex-1 mt-[12em] px-6 pb-8 overflow-y-auto custom-scrollbar scroll">
-  
     <div
       class="grid {viewMode === 'grid'
         ? 'grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4'
@@ -1562,11 +1601,13 @@
                         <span
                           class="px-1.5 py-0.5 bg-[#252525] rounded text-[10px] font-mono text-gray-300"
                         >
-                        {#if currentDownloading.quality == 'original'}
-                          Original
-                        {:else}
-                          {!currentDownloading.quality.includes('k') ? `${currentDownloading.quality}p` : currentDownloading.quality}
-                        {/if}
+                          {#if currentDownloading.quality == 'original'}
+                            Original
+                          {:else}
+                            {!currentDownloading.quality.includes('k')
+                              ? `${currentDownloading.quality}p`
+                              : currentDownloading.quality}
+                          {/if}
                         </span>
                       {/if}
                       {#if currentDownloading.format}
@@ -1735,11 +1776,11 @@
                     <span
                       class="px-1.5 py-0.5 bg-[#252525] rounded text-[10px] font-mono text-gray-300"
                     >
-                    {#if item.quality == 'original'}
-                      Original
-                    {:else}
-                      {!item.quality.includes('k') ? `${item.quality}p` : item.quality}
-                    {/if}
+                      {#if item.quality == 'original'}
+                        Original
+                      {:else}
+                        {!item.quality.includes('k') ? `${item.quality}p` : item.quality}
+                      {/if}
                     </span>
                   {/if}
 
@@ -1799,12 +1840,11 @@
                           <span
                             class="px-1.5 py-0.5 bg-[#252525] rounded text-[10px] font-mono text-gray-300"
                           >
-
-                          {#if item.quality == 'original'}
-                            Original
-                          {:else}
-                            {!item.quality.includes('k') ? `${item.quality}p` : item.quality}
-                          {/if}
+                            {#if item.quality == 'original'}
+                              Original
+                            {:else}
+                              {!item.quality.includes('k') ? `${item.quality}p` : item.quality}
+                            {/if}
                           </span>
                         {/if}
 
@@ -1878,12 +1918,12 @@
             class="w-full md:w-2/3 p-5 border-b md:border-b-0 md:border-r border-[#3a3a3a] bg-[#252525]/50 overflow-hidden"
           >
             <div class="aspect-video bg-black rounded-lg overflow-hidden">
-              <Player 
-                useEmbed={settings.use_embed} 
-                embedUrl={embed} 
-                src={video_test} 
-                poster={thumb_video} 
-                title={title_video} 
+              <Player
+                useEmbed={settings.use_embed}
+                embedUrl={embed}
+                src={video_test}
+                poster={thumb_video}
+                title={title_video}
               />
             </div>
             <div class="mt-4">
