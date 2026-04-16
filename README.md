@@ -5,6 +5,7 @@
 A powerful desktop application for downloading videos from various adult content websites with a clean, user-friendly interface.
 
 #### 📄 List of extensions
+
 [Horny Downloader Extensions](https://github.com/TokyoTF/horny-downloader/tree/main/extensions)
 
 ## ✨ Features
@@ -16,18 +17,27 @@ A powerful desktop application for downloading videos from various adult content
 - 🎨 Modern and intuitive interface
 - 💾 Save videos in different formats
 - ⚡ Quick preview of videos before downloading
-
+- 🌐 Site filter dropdown to filter downloads by site
+- 📥 Drag & drop URLs or .txt files to start batch downloads
+- 📤 Export download history to CSV/JSON
+- 📂 Organize downloads by site (subfolders)
+- 📑 Multiple naming patterns: Video Title, Site - Title, Title - Site, Date - Title, Random UUID
+- 🔔 Windows native notifications on download completion
+- 📝 Detailed logging system
+- 🤖 Telegram bot for remote control and notifications
 
 ## screenshots
+
 <img width="338" height="739" alt="Capt222ura" src="https://github.com/user-attachments/assets/bb4afb77-6681-4779-bf35-662c8afd9713" />
 
 <img width="331" height="732" alt="Catttptura" src="https://github.com/user-attachments/assets/0cf52c37-7b88-48ef-bb63-c515088713dd" />
-
 
 ## 💾 Data Storage
 
 - All application data is stored locally using **SQLite** in a `data.db` file
 - Thumbnails and temporary files are stored in the `temp` folder
+- Downloaded videos are saved in the `downloads` folder (or custom path)
+- Logs are stored in `Documents/horny-downloader/logs/`
 
 ## 📦 Extensions
 
@@ -42,14 +52,13 @@ You can easily add new extensions by downloading them from GitHub and placing th
 1. **Find the extension** on GitHub that you want to add
 2. **Navigate to the extension file** (usually ends with `Extension.js`)
 3. **Click the "Download Raw File" button** to view the raw file content
-5. **Place the file** in your `extensions/` folder
-6. **Restart the application** to load the new extension
-
-
+4. **Place the file** in your `extensions/` folder
+5. **Restart the application** to load the new extension
 
 #### Extension File Requirements
 
 Extension files must:
+
 - Be named with `Extension.js` suffix (e.g., `NewSiteExtension.js`)
 - Export a default class
 - Include proper configuration in the constructor
@@ -70,7 +79,7 @@ export default class NewSiteExtension {
       format_support: ['mp4'],
       vtt_support: false,
       quality_support: ['1080', '720', '480'],
-      version:'1.0.0'
+      version: '1.0.0'
     }
     this.extension = new ExtensionExtra(this.config)
   }
@@ -80,9 +89,7 @@ export default class NewSiteExtension {
     return this.extension.createResponse({
       embed: 'https://example.com/embed/video123',
       video_test: 'https://example.com/video.mp4',
-      list_quality: [
-        { quality: '720', url: 'https://example.com/video720.mp4' }
-      ],
+      list_quality: [{ quality: '720', url: 'https://example.com/video720.mp4' }],
       title: 'Video Title',
       time: '10:30',
       thumb: 'https://example.com/thumb.jpg',
@@ -108,6 +115,7 @@ export default class NewSiteExtension {
 - Eporner
 - Sxyprn
 - Bunkr
+- Pimpbunny
 
 ## 🛠️ Installation for dev
 
@@ -122,12 +130,14 @@ export default class NewSiteExtension {
 ### Steps
 
 1. Clone the repository:
+
    ```bash
    git clone https://github.com/TokyoTF/horny-downloader.git
    cd horny-downloader
    ```
 
 2. Install dependencies:
+
    ```bash
    npm install
    # or
@@ -145,9 +155,30 @@ export default class NewSiteExtension {
 
 This application is currently only supported on Windows operating systems. Support for other platforms may be added in the future.
 
+## 🤖 Telegram Bot
+
+You can enable the Telegram bot in Settings to receive notifications and control downloads remotely.
+
+### Setup
+
+1. Create a bot with [@BotFather](https://t.me/BotFather) on Telegram and get token
+2. Enable Telegram Bot in Settings and enter your Bot Token
+
+### Commands
+
+- `/start` - Show bot menu
+- `/status` - Show download status
+- `/dl` - Download direct
+- `/queue` - Show queue information
+- `/add <url>` - Add a URL to download
+- `/settings` - Show current settings
+- `/logs` - Show recent logs
+- `/stop` - Stop the bot
+
 ## 🚀 Building for Production
 
 To build for Windows:
+
 ```bash
 npm run build:win
 ```
@@ -156,9 +187,7 @@ npm run build:win
 
 [![Electron][Electron]][Electron-url] [![Svelte][Svelte]][Svelte-url] [![Vite][Vite]][Vite-url]
 
-
 > Based on [Electron Vite](https://electron-vite.org/) template
-
 
 ## 📝 License
 

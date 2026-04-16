@@ -45,12 +45,15 @@
     use_embed: false,
     extension_branch: 'main',
     dev_auto_sync: false,
-    custom_ffmpeg_params: ''
+    custom_ffmpeg_params: '',
+    organize_by_site: false,
+    telegram_enabled: false,
+    telegram_token: ''
   })
 
   // --- Extensions State ---
   let extensions_status = $state({})
-  let sites = $state([{ value: 'auto', label: 'Auto Detect', requiresExtension: false }])
+  let sites = $state([])
   let availableUpdates = $state([])
   let isCheckingUpdates = $state(false)
 
@@ -61,7 +64,7 @@
   let video_test = $state('')
   let embed = $state('')
   let referer = $state('')
-  let sel_site = $state('auto')
+  let sel_site = $state('')
   let quality_list = $state([{ url: '', quality: 'loading', size: '' }])
   let format_video = $state('mkv')
   let time_video = $state('')
@@ -71,10 +74,12 @@
   let site_video = ''
   let url_video = $state('')
   let window_video = $state(false)
+  let telegram_download = $state(false)
 
   // --- UI State ---
   let searchQuery = $state('')
   let searchType = $state('title')
+  let siteFilter = $state('all')
   let viewMode = $state('list')
   let sortType = $state('date')
   let sortDirection = $state('desc')
@@ -85,8 +90,10 @@
   let batchModalOpen = $state(false)
   let batchUrls = $state([])
   let batchQuality = $state('max')
-  let batchDelay = $state(4000)
+  let batchDelay = $state(12000)
+  let batchSkipCount = $state(0)
   let batchProgress = $state({ total: 0, processed: 0, remaining: 0 })
+  let isDraggingOver = $state(false)
 
   // --- Derived State ---
   let currentDownloading = $derived(
@@ -99,12 +106,15 @@
     locallist
       .filter((item) => {
         let ok = true
+        if (siteFilter && siteFilter !== 'all') {
+          ok = ok && item.site && item.site.toLowerCase() === siteFilter.toLowerCase()
+        }
         if (searchQuery) {
           const query = searchQuery.toLowerCase()
           if (searchType === 'title') {
-            ok = item.title && item.title.toLowerCase().includes(query)
+            ok = ok && item.title && item.title.toLowerCase().includes(query)
           } else if (searchType === 'url') {
-            ok = item.url && item.url.toLowerCase().includes(query)
+            ok = ok && item.url && item.url.toLowerCase().includes(query)
           } else {
             ok = true
           }
@@ -183,7 +193,6 @@
     }
 
     // Load List
-    console.time('LoadingList')
     window.electron.ipcRenderer.send('getList')
 
     return () => {
@@ -200,7 +209,39 @@
     window.electron.ipcRenderer.on('getProgress', handleGetProgress)
     window.electron.ipcRenderer.on('getVideo', handleGetVideo)
     window.electron.ipcRenderer.on('deletedItem', handleDeletedItem)
-    window.electron.ipcRenderer.on('batch-progress', handleBatchProgress)
+    window.electron.ipcRenderer.on('batch-progress', (e, data) => {
+      batchProgress = data
+    })
+    window.electron.ipcRenderer.on('telegram-url-received', (e, url) => {
+      if (url && !telegram_download) {
+        window.electron.ipcRenderer.send('getVideo', { url: url })
+        telegram_download = true
+        notifications.info('URL received from Telegram - select quality', { duration: 3000 })
+      }
+    })
+    window.electron.ipcRenderer.on('telegram-download-start', (e, { url, quality, videoInfo }) => {
+      if (url) {
+        const bestQuality = videoInfo.list_quality.find((q) => q.quality === quality)
+        const videoSrc = bestQuality?.url || videoInfo.video_test?.[0]?.url || videoInfo.video_src
+
+        if (videoSrc) {
+          window.electron.ipcRenderer.send('addToDownload', {
+            title: videoInfo.title || 'Unknown',
+            url: url,
+            site: videoInfo.site || 'unknown',
+            format: settings.default_format || 'mkv',
+            quality: quality,
+            thumb: videoInfo.thumb || '',
+            time: videoInfo.time || '0:0:0',
+            video_src: videoSrc,
+            referer: videoInfo.referer || '',
+            fromTelegram: true
+          })
+          telegram_download = false
+          notifications.info(`Download started: ${quality}p`, { duration: 3000 })
+        }
+      }
+    })
   }
 
   function removeIpcListeners() {
@@ -209,11 +250,8 @@
     window.electron.ipcRenderer.removeAllListeners('getProgress')
     window.electron.ipcRenderer.removeAllListeners('getVideo')
     window.electron.ipcRenderer.removeAllListeners('deletedItem')
-    window.electron.ipcRenderer.removeAllListeners('batch-progress')
-  }
-
-  const handleBatchProgress = (e, v) => {
-    batchProgress = v
+    window.electron.ipcRenderer.removeAllListeners('telegram-url-received')
+    window.electron.ipcRenderer.removeAllListeners('telegram-download-start')
   }
 
   const handleGetList = (e, v) => {
@@ -242,10 +280,11 @@
 
     if (isInitialLoad) {
       notifications.success('The list loaded successfully', { duration: 1500 })
-      console.timeEnd('LoadingList')
       isInitialLoad = false
       checkForUpdates()
     }
+
+    updateSitesList()
   }
 
   const handleGetCheck = (e, { status, id, pathfile, filesize }) => {
@@ -277,10 +316,25 @@
 
   const handleGetVideo = (e, v) => {
     getdata = true
+
     if (v.error) {
       notifications.error('Failed to get video data', { duration: 2000 })
+      window_video = false
       return
     }
+
+    if (v.is_batch && v.batch_urls && v.batch_urls.length > 0) {
+      window_video = false
+      getdata = false
+      batchUrls = v.batch_urls
+      batchModalOpen = true
+      batchQuality = 'max'
+      batchDelay = 4000
+      notifications.info(`Found ${v.batch_urls.length} videos in album`, { duration: 3000 })
+      return
+    }
+
+    window_video = true
     updateList(v)
   }
 
@@ -369,9 +423,12 @@
       url_video = v.url
       embed = v.embed
       referer = v.referer
-      quality_list = v.list_quality.sort((a, b) => b.quality - a.quality)
-      selected_quality = quality_list[0].url
-      notifications.success('Data obtained', { duration: 2000 })
+      quality_list =
+        v.list_quality && v.list_quality.length > 0
+          ? v.list_quality.sort((a, b) => b.quality - a.quality)
+          : [{ url: '', quality: 'original', size: '' }]
+      selected_quality = quality_list[0]?.url || ''
+
       setTimeout(() => {
         getdata = false
       }, 1500)
@@ -427,7 +484,10 @@
       use_embed: false,
       extension_branch: 'main',
       dev_auto_sync: false,
-      custom_ffmpeg_params: ''
+      custom_ffmpeg_params: '',
+      organize_by_site: false,
+      telegram_enabled: false,
+      telegram_token: ''
     }
     notifications.success('LocalStorage cleared and settings reset', { duration: 2000 })
   }
@@ -466,7 +526,17 @@
 
     loadedSites.sort((a, b) => a.label.localeCompare(b.label))
 
-    sites = [{ value: 'auto', label: 'Auto Detect', requiresExtension: false }, ...loadedSites]
+    const historySites = [...new Set(locallist.map((item) => item.site).filter(Boolean))]
+    historySites.sort((a, b) => a.localeCompare(b))
+
+    const historySiteOptions = historySites.map((site) => ({
+      value: site,
+      label: site,
+      color: '#666666',
+      requiresExtension: false
+    }))
+
+    sites = [...loadedSites, ...historySiteOptions]
   }
 
   async function reloadExtensions() {
@@ -544,7 +614,7 @@
   // --- Download & Batch ---
 
   function getVideo() {
-    window_video = true
+    window_video = false
     video_test = ''
     time_video = ''
     thumb_video = ''
@@ -552,12 +622,15 @@
     embed = ''
     referer = ''
     getdata = true
-    window.electron.ipcRenderer.send('getVideo', { site: 'auto', url: url })
+    window.electron.ipcRenderer.send('getVideo', { url: url })
     notifications.info('Obtaining data', { duration: 2000 })
   }
 
   function startDownload() {
-    if (getdata == false) {
+    if (getdata == false && quality_list.length > 0 && quality_list[0].url) {
+      const qualityItem = quality_list.find((item) => item.url == selected_quality)
+      if (!qualityItem) return
+
       const tempid = crypto.randomUUID()
       const newItem = {
         title: title_video,
@@ -570,7 +643,7 @@
         tempid: tempid,
         duration: toSeconds(time_video),
         referer: referer,
-        quality: quality_list.find((item) => item.url == selected_quality).quality,
+        quality: qualityItem.quality,
         created_at: new Date().toISOString(),
         status: 0
       }
@@ -594,7 +667,7 @@
         tempid: tempid,
         duration: time_video,
         referer: referer,
-        quality: quality_list.find((item) => item.url == selected_quality).quality
+        quality: qualityItem ? qualityItem.quality : 'original'
       })
       url = ''
       window.document.querySelector('.scroll').scrollTo({ top: 0 })
@@ -616,6 +689,15 @@
     }
   }
 
+  function cancelDownloadItem(id) {
+    try {
+      notifications.info('Cancelling download...', { duration: 2000 })
+      window.electron.ipcRenderer.send('cancelDownload', { id })
+    } catch (err) {
+      console.error(err)
+    }
+  }
+
   async function openBatchImport() {
     try {
       const result = await window.electron.ipcRenderer.invoke('pick-batch-file')
@@ -634,10 +716,13 @@
 
   async function startBatchProcessing() {
     batchModalOpen = false
+    batchProgress = { total: batchUrls.length, processed: 0, remaining: batchUrls.length }
     try {
+      const urlsToProcess = batchSkipCount > 0 ? batchUrls.slice(batchSkipCount) : batchUrls
+
       const args = JSON.parse(
         JSON.stringify({
-          urls: batchUrls,
+          urls: urlsToProcess,
           quality: batchQuality,
           delay: batchDelay
         })
@@ -645,18 +730,108 @@
 
       await window.electron.ipcRenderer.invoke('start-batch-download', args)
 
-      notifications.success(`Processing ${batchUrls.length} links in background...`, {
-        duration: 3000
-      })
+      notifications.success(
+        `Processing ${urlsToProcess.length} links (skipped ${batchSkipCount})...`,
+        {
+          duration: 3000
+        }
+      )
     } catch (err) {
       console.error(err)
       notifications.error('Failed to start batch')
+    }
+  }
+
+  function handleDragOver(e) {
+    e.preventDefault()
+    isDraggingOver = true
+  }
+
+  function handleDragLeave(e) {
+    e.preventDefault()
+    isDraggingOver = false
+  }
+
+  function handleDrop(e) {
+    e.preventDefault()
+    isDraggingOver = false
+
+    const files = e.dataTransfer?.files
+    if (files && files.length > 0) {
+      const file = files[0]
+      if (file.type === 'text/plain' || file.name.endsWith('.txt')) {
+        const reader = new FileReader()
+        reader.onload = (event) => {
+          const content = event.target?.result
+          if (typeof content === 'string') {
+            const urls = content
+              .split(/\r?\n/)
+              .map((line) => line.trim())
+              .filter((line) => line.startsWith('http'))
+
+            if (urls.length === 1) {
+              url = urls[0]
+              getVideo()
+              notifications.info('Starting download...', { duration: 2000 })
+            } else if (urls.length > 1) {
+              batchUrls = urls
+              batchModalOpen = true
+              batchQuality = 'max'
+              batchDelay = 4000
+              notifications.info(`Found ${urls.length} URLs to import`, { duration: 2000 })
+            } else {
+              notifications.error('No valid URLs found in file')
+            }
+          }
+        }
+        reader.readAsText(file)
+      } else {
+        const text = e.dataTransfer?.getData('text')
+        if (text) {
+          const urls = text.split(/\s+/).filter((line) => line.startsWith('http'))
+
+          if (urls.length === 1) {
+            url = urls[0]
+            getVideo()
+            notifications.info('Starting download...', { duration: 2000 })
+          } else if (urls.length > 1) {
+            batchUrls = urls
+            batchModalOpen = true
+            batchQuality = 'max'
+            batchDelay = 4000
+            notifications.info(`Found ${urls.length} URLs to import`, { duration: 2000 })
+          }
+        }
+      }
     }
   }
 </script>
 
 <NotificationToast />
 <UpdateNotification />
+
+{#if isDraggingOver}
+  <div
+    class="fixed inset-0 z-50 bg-orange-500/20 border-4 border-dashed border-orange-500 flex items-center justify-center pointer-events-none"
+  >
+    <div class="text-center">
+      <svg
+        class="w-16 h-16 mx-auto text-orange-500 mb-4"
+        fill="none"
+        viewBox="0 0 24 24"
+        stroke="currentColor"
+      >
+        <path
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="2"
+          d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
+        />
+      </svg>
+      <p class="text-2xl font-bold text-orange-500">Drop URLs here to batch download</p>
+    </div>
+  </div>
+{/if}
 
 {#if showSettingsPrompt}
   <div class="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
@@ -721,6 +896,24 @@
             placeholder="0"
           />
           <p class="text-xs text-gray-500 mt-1">Useful to avoid rate limits.</p>
+        </div>
+
+        <div>
+          <label for="skip" class="text-xs font-medium text-gray-300 block mb-1.5"
+            >Skip first N links</label
+          >
+          <input
+            type="number"
+            id="skip"
+            bind:value={batchSkipCount}
+            min="0"
+            max={batchUrls.length - 1}
+            class="w-full bg-[#1B1B1B] border border-[#3d3d3d] text-white text-sm rounded-lg focus:ring-orange-500 focus:border-orange-500 block p-2.5 outline-none placeholder-gray-500"
+            placeholder="0"
+          />
+          <p class="text-xs text-gray-500 mt-1">
+            Skip first {batchSkipCount} links, will process {batchUrls.length - batchSkipCount} links.
+          </p>
         </div>
       </div>
 
@@ -803,6 +996,8 @@
         class="w-full appearance-none bg-[#1B1B1B] border-2 border-[#2d2d2d] hover:border-[#3d3d3d] focus:border-[#FF9027] focus:ring-1 focus:ring-[#FF9027]/50 rounded-lg pl-10 pr-8 py-2.5 text-sm font-medium transition-all duration-200 cursor-pointer"
         bind:value={sel_site}
       >
+        <option value="" disabled>Auto Detect</option>
+        <option value="" disabled>---</option>
         {#each sites as site}
           <option
             value={site.value}
@@ -905,6 +1100,44 @@
   </div>
 
   <div class="relative w-full max-w-4xl flex items-center gap-2">
+    <div class="relative">
+      <select
+        bind:value={siteFilter}
+        class="appearance-none bg-[#1B1B1B] border-2 border-[#2d2d2d] hover:border-[#3d3d3d] focus:border-[#FF9027] focus:ring-1 focus:ring-[#FF9027]/50 rounded-lg pl-8 pr-7 py-1.5 text-xs font-medium text-gray-300 transition-all cursor-pointer outline-none min-w-[110px]"
+      >
+        <option value="all">All Sites</option>
+        <option value="" disabled>---</option>
+        {#each sites as site}
+          <option value={site.value}>{site.label}</option>
+        {/each}
+      </select>
+      <div class="absolute inset-y-0 left-0 flex items-center pl-2.5 pointer-events-none">
+        <svg
+          class="h-3.5 w-3.5 text-gray-400"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+        >
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="2"
+            d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"
+          />
+        </svg>
+      </div>
+      <div class="absolute inset-y-0 right-0 flex items-center pr-2 pointer-events-none">
+        <svg class="h-3 w-3 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="2"
+            d="M19 9l-7 7-7-7"
+          />
+        </svg>
+      </div>
+    </div>
+
     <div class="relative">
       <select
         bind:value={searchType}
@@ -1021,15 +1254,6 @@
       </button>
     </div>
 
-    {#if activeTab === 'downloading' && batchProgress.remaining > 0}
-      <div class="ml-2 text-xs text-gray-400 flex items-center gap-1.5">
-        <span class="text-orange-400">{batchProgress.processed}</span>
-        <span>/</span>
-        <span>{batchProgress.total}</span>
-        <span class="text-gray-500">remaining</span>
-      </div>
-    {/if}
-
     <div class="flex bg-[#1B1B1B] rounded-lg border-2 border-[#2d2d2d] p-0.5 shrink-0 ml-1">
       <button
         onclick={() => (viewMode = 'list')}
@@ -1053,7 +1277,12 @@
   </div>
 </div>
 
-<main class="h-full flex flex-col justify-center items-center text-sm">
+<main
+  class="h-full flex flex-col justify-center items-center text-sm"
+  ondragover={handleDragOver}
+  ondragleave={handleDragLeave}
+  ondrop={handleDrop}
+>
   {#if settings_open}
     <div
       class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4 top-10"
@@ -1152,7 +1381,7 @@
                   </button>
                 </div>
               </div>
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div class="flex flex-col gap-4">
                 <div class="space-y-1.5">
                   <label
                     for="setting-default-format"
@@ -1201,6 +1430,9 @@
                       bind:value={settings.namefile_type}
                     >
                       <option value="video_title">Video Title</option>
+                      <option value="site_title">Site - Title</option>
+                      <option value="title_site">Title - Site</option>
+                      <option value="date_title">Date - Title</option>
                       <option value="random_uuid">Random UUID</option>
                     </select>
                     <div
@@ -1225,6 +1457,28 @@
 
                 <div class="space-y-1.5">
                   <div class="flex items-center justify-between">
+                    <label for="setting-organize-by-site" class="text-sm font-medium text-gray-200">
+                      Organize by Site
+                      <span class="ml-1 text-xs text-gray-400 font-normal"
+                        >Create subfolders per site</span
+                      >
+                    </label>
+                    <label class="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        id="setting-organize-by-site"
+                        bind:checked={settings.organize_by_site}
+                        class="sr-only peer"
+                      />
+                      <div
+                        class="w-9 h-5 bg-[#252525] border border-[#3a3a3a] rounded-full peer peer-checked:after:translate-x-4 peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[#FF9027]"
+                      ></div>
+                    </label>
+                  </div>
+                </div>
+
+                <div class="space-y-1.5">
+                  <div class="flex items-center justify-between">
                     <label for="setting-use-embed" class="text-sm font-medium text-gray-200">
                       Use Embedded Player
                       <span class="ml-1 text-xs text-gray-400 font-normal">(Experimental)</span>
@@ -1237,7 +1491,7 @@
                         class="sr-only peer"
                       />
                       <div
-                        class="w-9 h-5 bg-gray-700 rounded-full peer peer-checked:after:translate-x-4 peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[#FF9027]"
+                        class="w-9 h-5 bg-[#252525] border border-[#3a3a3a] rounded-full peer peer-checked:after:translate-x-4 peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[#FF9027]"
                       ></div>
                     </label>
                   </div>
@@ -1316,6 +1570,42 @@
                   </p>
                 </div>
 
+                <div class="space-y-3 pt-4 border-t border-[#3a3a3a]">
+                  <div class="flex items-center justify-between">
+                    <label for="telegram-enabled" class="text-sm font-medium text-gray-200">
+                      Telegram Bot
+                      <span class="ml-1 text-xs text-gray-400 font-normal">Enable Telegram</span>
+                    </label>
+                    <label class="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        id="telegram-enabled"
+                        bind:checked={settings.telegram_enabled}
+                        class="sr-only peer"
+                      />
+                      <div
+                        class="w-9 h-5 bg-[#252525] border border-[#3a3a3a] rounded-full peer peer-checked:after:translate-x-4 peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[#FF9027]"
+                      ></div>
+                    </label>
+                  </div>
+
+                  {#if settings.telegram_enabled}
+                    <div class="space-y-1.5">
+                      <label for="telegram-token" class="block text-sm font-medium text-gray-200">
+                        Bot Token
+                        <span class="ml-1 text-xs text-gray-400 font-normal">From @BotFather</span>
+                      </label>
+                      <input
+                        id="telegram-token"
+                        type="password"
+                        bind:value={settings.telegram_token}
+                        class="w-full px-3.5 py-2 bg-[#252525] border border-[#3a3a3a] hover:border-[#4a4a4a] focus:border-[#FF9027] focus:ring-2 focus:ring-[#FF9027]/30 rounded-lg text-sm text-white transition-all duration-200 placeholder-gray-500"
+                        placeholder="1234567890:ABCdefGHIjklMNOpqrsTUVwxyz"
+                      />
+                    </div>
+                  {/if}
+                </div>
+
                 {#if isDev}
                   <div class="space-y-1.5 border-t border-[#3a3a3a] pt-4 mt-2">
                     <h4 class="text-xs font-semibold text-purple-400 uppercase tracking-wide mb-3">
@@ -1340,7 +1630,7 @@
                           class="sr-only peer"
                         />
                         <div
-                          class="w-9 h-5 bg-gray-700 rounded-full peer peer-checked:after:translate-x-4 peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-purple-600"
+                          class="w-9 h-5 bg-[#252525] border border-[#3a3a3a] rounded-full peer peer-checked:after:translate-x-4 peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-purple-600"
                         ></div>
                       </label>
                     </div>
@@ -1377,6 +1667,74 @@
                         />
                       </svg>
                     </div>
+                  </div>
+                </div>
+
+                <div class="space-y-3 pt-4 border-t border-[#3a3a3a]">
+                  <h4 class="text-xs font-semibold text-gray-400 uppercase tracking-wide">
+                    Export Data
+                  </h4>
+                  <div class="flex gap-3">
+                    <button
+                      onclick={async () => {
+                        try {
+                          const csv = await window.electron.ipcRenderer.invoke('export-list', {
+                            format: 'csv'
+                          })
+                          const blob = new Blob([csv], { type: 'text/csv' })
+                          const url = URL.createObjectURL(blob)
+                          const a = document.createElement('a')
+                          a.href = url
+                          a.download = `horny-downloader-export-${new Date().toISOString().split('T')[0]}.csv`
+                          a.click()
+                          URL.revokeObjectURL(url)
+                          notifications.success('Exported to CSV', { duration: 2000 })
+                        } catch (e) {
+                          notifications.error('Export failed')
+                        }
+                      }}
+                      class="flex-1 px-4 py-2 bg-[#333333] hover:bg-[#3d3d3d] text-gray-300 hover:text-white rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
+                    >
+                      <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          stroke-width="2"
+                          d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                        />
+                      </svg>
+                      Export CSV
+                    </button>
+                    <button
+                      onclick={async () => {
+                        try {
+                          const json = await window.electron.ipcRenderer.invoke('export-list', {
+                            format: 'json'
+                          })
+                          const blob = new Blob([json], { type: 'application/json' })
+                          const url = URL.createObjectURL(blob)
+                          const a = document.createElement('a')
+                          a.href = url
+                          a.download = `horny-downloader-export-${new Date().toISOString().split('T')[0]}.json`
+                          a.click()
+                          URL.revokeObjectURL(url)
+                          notifications.success('Exported to JSON', { duration: 2000 })
+                        } catch (e) {
+                          notifications.error('Export failed')
+                        }
+                      }}
+                      class="flex-1 px-4 py-2 bg-[#333333] hover:bg-[#3d3d3d] text-gray-300 hover:text-white rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
+                    >
+                      <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          stroke-width="2"
+                          d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"
+                        />
+                      </svg>
+                      Export JSON
+                    </button>
                   </div>
                 </div>
               </div>
@@ -1520,6 +1878,13 @@
   {/if}
 
   <div class="w-full flex-1 mt-[12em] px-6 pb-8 overflow-y-auto custom-scrollbar scroll">
+  {#if batchProgress.total > 0}
+    <span
+      class="px-2 py-1 bg-[#1a2a4a] text-[#60a5fa] text-xs font-medium rounded-full absolute bottom-0 left-0 m-2 z-10"
+    >
+      batch: {batchProgress.processed}/{batchProgress.total}
+    </span>
+  {/if}
     <div
       class="grid {viewMode === 'grid'
         ? 'grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4'
@@ -1527,7 +1892,7 @@
     >
       {#if currentDownloading}
         <div
-          class="group bg-[#1e1e1e] border border-[#2d2d2d] hover:border-[#3d3d3d] rounded-xl p-3 transition-all duration-200 hover:shadow-lg hover:shadow-[#FF9027]/5 col-span-1"
+          class="group bg-[#1e1e1e] border border-[#2d2d2d] hover:border-[#3d3d3d] rounded-xl p-3 transition-all duration-200 col-span-1"
         >
           <div class="flex {viewMode === 'grid' ? 'flex-col gap-3' : 'gap-4'} items-start">
             <div
@@ -1536,7 +1901,9 @@
                 : 'w-32 h-20'} rounded-lg overflow-hidden bg-[#252525] border border-[#3a3a3a] group-hover:border-[#4a4a4a] transition-colors"
             >
               <img
-                src={currentDownloading.thumb}
+                src={currentDownloading.thumb.includes('http')
+                  ? currentDownloading.thumb
+                  : 'hornydl://' + currentDownloading.thumb.replace(/\\/g, '/')}
                 alt={currentDownloading.title}
                 loading="lazy"
                 class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
@@ -1597,10 +1964,7 @@
                       {/if}
                       {#if currentDownloading.quality}
                         <span class="text-gray-500">•</span>
-                        quality:
-                        <span
-                          class="px-1.5 py-0.5 bg-[#252525] rounded text-[10px] font-mono text-gray-300"
-                        >
+                        <span>
                           {#if currentDownloading.quality == 'original'}
                             Original
                           {:else}
@@ -1617,6 +1981,24 @@
                     </div>
                   </div>
                 </div>
+                <div class="flex items-center gap-2">
+
+                  <button
+                    onclick={() =>
+                      cancelDownloadItem(currentDownloading.id || currentDownloading.tempid)}
+                    class="shrink-0 p-1 bg-red-500/20 text-red-400 rounded-md border border-red-500/30 hover:bg-red-500/40 transition-colors self-start"
+                    title="Cancel download"
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      class="w-5 h-5"
+                      viewBox="0 0 24 24"
+                      fill="currentColor"
+                    >
+                      <rect x="6" y="6" width="12" height="12" rx="1.5" />
+                    </svg>
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -1624,7 +2006,7 @@
       {/if}
       {#each filteredListDisplay as item}
         <div
-          class="group bg-[#1e1e1e] border border-[#2d2d2d] hover:border-[#3d3d3d] rounded-xl p-3 transition-all duration-200 hover:shadow-lg hover:shadow-[#FF9027]/5"
+          class="group bg-[#1e1e1e] border border-[#2d2d2d] hover:border-[#3d3d3d] rounded-xl p-3 transition-all duration-200"
         >
           <div class="flex {viewMode === 'grid' ? 'flex-col gap-3' : 'gap-4'} items-start">
             <div
@@ -1633,8 +2015,11 @@
                 : 'w-32 h-20'} rounded-lg overflow-hidden bg-[#252525] border border-[#3a3a3a] group-hover:border-[#4a4a4a] transition-colors"
             >
               <img
-                src={item.thumb}
-                alt=""
+                src={item.thumb.includes('http')
+                  ? item.thumb
+                  : 'hornydl://' + item.thumb.replace(/\\/g, '/')}
+                alt={item.title}
+                loading="lazy"
                 class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
               />
 
