@@ -1,6 +1,7 @@
 {
   "name": "horny-downloader",
-  "version": "1.1.5",
+  "version": "1.1.6",
+  "type": "module",
   "description": "Horny Downloader",
   "repository": {
     "type": "git",
@@ -33,6 +34,7 @@
     "fetch-cookie": "3.2.0",
     "fluent-ffmpeg": "2.1.3",
     "fs-extra": "11.3.3",
+    "grammy": "^1.42.0",
     "hls.js": "1.6.15",
     "lucide-svelte": "0.563.0",
     "m3u8-parser": "7.2.0",

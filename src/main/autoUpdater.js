@@ -1,5 +1,10 @@
-import { autoUpdater } from 'electron-updater'
+import elctronUpdater from 'electron-updater'
 import { ipcMain, BrowserWindow } from 'electron'
+import logger from './logger.js'
+
+const { autoUpdater } = elctronUpdater
+
+const isDev = process.env.NODE_ENV === 'development' || !process.env.NODE_ENV
 
 autoUpdater.autoDownload = false
 autoUpdater.autoInstallOnAppQuit = true
@@ -13,7 +18,8 @@ ipcMain.handle('restart-and-update', () => {
 })
 
 autoUpdater.on('update-available', (info) => {
-  console.log('Update available:', info)
+  if (isDev) return
+  logger.info('Update available:', info)
   const win = BrowserWindow.getFocusedWindow()
   if (win) {
     win.webContents.send('update-available', {
@@ -25,7 +31,8 @@ autoUpdater.on('update-available', (info) => {
 })
 
 autoUpdater.on('update-downloaded', (info) => {
-  console.log('Update downloaded, ready to install')
+  if (isDev) return
+  logger.info('Update downloaded, ready to install')
   const win = BrowserWindow.getFocusedWindow()
   if (win) {
     win.webContents.send('update-downloaded', {
@@ -39,12 +46,12 @@ async function checkForUpdates() {
 }
 
 function setupAutoUpdater() {
+  if (isDev) return
   setTimeout(() => {
     checkForUpdates()
   }, 5000)
 
   ipcMain.handle('check-for-updates', checkForUpdates)
-
 }
 
 export { checkForUpdates, setupAutoUpdater }

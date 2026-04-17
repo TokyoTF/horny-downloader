@@ -1,12 +1,25 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap');
+@font-face {
+  font-family: 'Inter';
+  src: url('./inter.ttf') format('truetype');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
 
-@import "tailwindcss";
+@import 'tailwindcss';
 
 *,
 *::before,
 *::after {
   box-sizing: border-box;
-  font-family: "Inter", sans-serif;
+  font-family: 'Inter', sans-serif;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: #161616;
 }
 
 ul {
@@ -20,7 +33,7 @@ body {
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  font-family: "Inter", sans-serif;
+  font-family: 'Inter', sans-serif;
   font-optical-sizing: auto;
 }
 
@@ -45,7 +58,7 @@ body {
 }
 
 *:focus {
-    outline: none;
+  outline: none;
 }
 
 #app {
@@ -56,19 +69,24 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  position: relative;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
 }
 
-video{
+video {
   width: 100%;
   height: 100%;
 }
 
 .no_move {
-
   -webkit-app-region: no-drag;
 }
-.move {-webkit-app-region: drag;}
+.move {
+  -webkit-app-region: drag;
+}
 
 .size {
   width: 450px;
@@ -87,14 +105,13 @@ video{
   display: contents;
 }
 
-
-label.label_checkbox input{
+label.label_checkbox input {
   display: none;
 }
-label.label_checkbox input:checked ~ .checkbox-type-format{
-  box-shadow: 0px 0px 0px 1px #F14B69;
- }
- 
+label.label_checkbox input:checked ~ .checkbox-type-format {
+  box-shadow: 0px 0px 0px 1px #f14b69;
+}
+
 .checkbox-type-format {
   width: fit-content;
   font-size: 13px;
@@ -117,7 +134,7 @@ label.label_checkbox input:checked ~ .checkbox-type-format{
 }
 
 media-pip-button {
-  display:none;
+  display: none;
 }
 
 .container_video_preconfig {
