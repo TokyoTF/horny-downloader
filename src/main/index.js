@@ -578,7 +578,7 @@ function createWindow() {
     height: 590,
     minHeight: 590,
     show: false,
-    transparent: true,
+    backgroundColor: '#161616',
     titleBarStyle: 'hidden',
     autoHideMenuBar: true,
     ...(process.platform === 'linux' ? { icon } : {}),

@@ -529,12 +529,15 @@
     const historySites = [...new Set(locallist.map((item) => item.site).filter(Boolean))]
     historySites.sort((a, b) => a.localeCompare(b))
 
-    const historySiteOptions = historySites.map((site) => ({
-      value: site,
-      label: site,
-      color: '#666666',
-      requiresExtension: false
-    }))
+    const loadedSiteValues = new Set(loadedSites.map((s) => s.value.toLowerCase()))
+    const historySiteOptions = historySites
+      .filter((site) => !loadedSiteValues.has(site.toLowerCase()))
+      .map((site) => ({
+        value: site,
+        label: site,
+        color: '#666666',
+        requiresExtension: false
+      }))
 
     sites = [...loadedSites, ...historySiteOptions]
   }
@@ -1223,7 +1226,7 @@
 
     <button
       onclick={() => (sortDirection = sortDirection === 'asc' ? 'desc' : 'asc')}
-      class="p-1.5 ml-1 rounded-lg bg-[#1B1B1B] border-2 border-[#2d2d2d] hover:border-[#3d3d3d] text-gray-400 hover:text-white transition-all duration-200"
+      class="p-1.5 rounded-lg bg-[#1B1B1B] border-2 border-[#2d2d2d] hover:border-[#3d3d3d] text-gray-400 hover:text-white transition-all duration-200"
       title={sortDirection === 'asc' ? 'Sort Ascending' : 'Sort Descending'}
     >
       {#if sortDirection === 'asc'}
@@ -1233,7 +1236,7 @@
       {/if}
     </button>
 
-    <div class="flex bg-[#1B1B1B] rounded-lg border-2 border-[#2d2d2d] p-0.5 shrink-0 ml-1">
+    <div class="flex bg-[#1B1B1B] rounded-lg border-2 border-[#2d2d2d] p-0.5 shrink-0">
       <button
         onclick={() => (activeTab = 'all')}
         class="p-1.5 rounded-md transition-all text-xs duration-200 {activeTab === 'all'
@@ -1254,7 +1257,7 @@
       </button>
     </div>
 
-    <div class="flex bg-[#1B1B1B] rounded-lg border-2 border-[#2d2d2d] p-0.5 shrink-0 ml-1">
+    <div class="flex bg-[#1B1B1B] rounded-lg border-2 border-[#2d2d2d] p-0.5 shrink-0">
       <button
         onclick={() => (viewMode = 'list')}
         class="p-1.5 rounded-md transition-all duration-200 {viewMode === 'list'
@@ -1574,7 +1577,7 @@
                   <div class="flex items-center justify-between">
                     <label for="telegram-enabled" class="text-sm font-medium text-gray-200">
                       Telegram Bot
-                      <span class="ml-1 text-xs text-gray-400 font-normal">Enable Telegram</span>
+                      <span class="ml-1 text-xs text-gray-400 font-normal">Enable TelegramBot</span>
                     </label>
                     <label class="relative inline-flex items-center cursor-pointer">
                       <input
@@ -1878,13 +1881,13 @@
   {/if}
 
   <div class="w-full flex-1 mt-[12em] px-6 pb-8 overflow-y-auto custom-scrollbar scroll">
-  {#if batchProgress.total > 0}
-    <span
-      class="px-2 py-1 bg-[#1a2a4a] text-[#60a5fa] text-xs font-medium rounded-full absolute bottom-0 left-0 m-2 z-10"
-    >
-      batch: {batchProgress.processed}/{batchProgress.total}
-    </span>
-  {/if}
+    {#if batchProgress.total > 0}
+      <span
+        class="px-2 py-1 bg-[#1a2a4a] text-[#60a5fa] text-xs font-medium rounded-full absolute bottom-0 left-0 m-2 z-10"
+      >
+        batch: {batchProgress.processed}/{batchProgress.total}
+      </span>
+    {/if}
     <div
       class="grid {viewMode === 'grid'
         ? 'grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4'
@@ -1982,7 +1985,6 @@
                   </div>
                 </div>
                 <div class="flex items-center gap-2">
-
                   <button
                     onclick={() =>
                       cancelDownloadItem(currentDownloading.id || currentDownloading.tempid)}

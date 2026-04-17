@@ -26,14 +26,15 @@ export function init(dependencies) {
   telegramQueue = []
 
   return {
-    configure: (token, chat) => {
+    configure: async(token, chat) => {
       chatId = chat || ''
       if (token) {
         try {
           if (bot) {
             try {
-              bot.stop()
+              bot.isRunning() && await bot.stop()
             } catch (e) {}
+            bot = null
           }
           bot = new Bot(token)
           setupHandlers()
@@ -59,12 +60,13 @@ export function init(dependencies) {
     start: () => {
       isRunning = true
     },
-    stop: () => {
+    stop: async () => {
       isRunning = false
       if (bot) {
         try {
-          bot.stop()
+          bot.isRunning() && await bot.stop()
         } catch {}
+        bot = null
       }
     },
     isConfigured: () => !!bot,

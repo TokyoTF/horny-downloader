@@ -15,6 +15,13 @@
   font-family: 'Inter', sans-serif;
 }
 
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: #161616;
+}
+
 ul {
   list-style: none;
 }
@@ -62,7 +69,11 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  position: relative;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
 }
 
 video {
