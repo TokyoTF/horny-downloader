@@ -1,7 +1,9 @@
 <script>
-  import { onMount } from 'svelte'
+  import { onMount, tick } from 'svelte'
 
-  import Player from './components/player/Player.svelte'
+  let PlayerComponent = $state(null)
+  import('./components/player/Player.svelte').then((m) => (PlayerComponent = m.default))
+
   import NotificationToast from './components/NotificationToast.svelte'
   import UpdateNotification from './components/UpdateNotification.svelte'
   import { updateBanner, showUpdateBanner } from './components/store'
@@ -78,6 +80,8 @@
 
   // --- UI State ---
   let searchQuery = $state('')
+  let debouncedSearch = $state('')
+  let searchTimer = null
   let searchType = $state('title')
   let siteFilter = $state('all')
   let viewMode = $state('list')
@@ -85,6 +89,11 @@
   let sortDirection = $state('desc')
   let activeTab = $state('all')
   let revealingMap = $state({})
+
+  // --- Virtual Scrolling State ---
+  let visibleCount = $state(20)
+  let listContainer = $state(null)
+  let loadMore = $state(false)
 
   // --- Batch Import State ---
   let batchModalOpen = $state(false)
@@ -109,8 +118,8 @@
         if (siteFilter && siteFilter !== 'all') {
           ok = ok && item.site && item.site.toLowerCase() === siteFilter.toLowerCase()
         }
-        if (searchQuery) {
-          const query = searchQuery.toLowerCase()
+        if (debouncedSearch) {
+          const query = debouncedSearch.toLowerCase()
           if (searchType === 'title') {
             ok = ok && item.title && item.title.toLowerCase().includes(query)
           } else if (searchType === 'url') {
@@ -141,11 +150,63 @@
       })
   )
 
-  let filteredListDisplay = $derived(
+  let filteredListDisplay = $derived(filteredList)
+
+  let paginatedList = $derived(filteredListDisplay.slice(0, visibleCount))
+  let paginatedListWithoutCurrent = $derived(
     currentDownloading
-      ? filteredList.filter((it) => !sameItem(it, currentDownloading))
-      : filteredList
+      ? paginatedList.filter((it) => !sameItem(it, currentDownloading))
+      : paginatedList
   )
+  let hasMoreItems = $derived(
+    currentDownloading
+      ? visibleCount - 1 < filteredListDisplay.length
+      : visibleCount < filteredListDisplay.length
+  )
+
+  $effect(() => {
+    visibleCount = 20
+  })
+
+  $effect(() => {
+    activeTab
+    visibleCount = 20
+  })
+
+  $effect(() => {
+    const query = searchQuery
+    if (searchTimer) clearTimeout(searchTimer)
+    searchTimer = setTimeout(() => {
+      debouncedSearch = query
+    }, 250)
+    return () => {
+      if (searchTimer) clearTimeout(searchTimer)
+    }
+  })
+
+  $effect(() => {
+    sites
+    siteColorCache.clear()
+  })
+
+  function loadMoreItems() {
+    if (visibleCount < filteredListDisplay.length) {
+      visibleCount = Math.min(visibleCount + 40, filteredListDisplay.length)
+      loadMore = true
+      setTimeout(() => (loadMore = false), 100)
+    }
+  }
+
+  function handleScroll(e) {
+    const target = e.target
+    const scrollTop = target.scrollTop
+    const scrollHeight = target.scrollHeight
+    const clientHeight = target.clientHeight
+
+    if (scrollHeight - scrollTop - clientHeight < 300) {
+      loadMoreItems()
+    }
+  }
 
   // --- Initialization ---
 
@@ -343,6 +404,10 @@
   }
 
   // --- Helper Functions ---
+  const parseCreatedAtCache = new Map()
+  const formatTimeCache = new Map()
+  const bytesToSizeCache = new Map()
+  const siteColorCache = new Map()
 
   function sameItem(a, b) {
     if (!a || !b) return false
@@ -353,42 +418,58 @@
   }
 
   function parseCreatedAt(val) {
-    if (!val) return 0
-    if (val instanceof Date) return val.getTime()
-    if (typeof val === 'number') return val
-    if (typeof val === 'string') {
+    if (parseCreatedAtCache.has(val)) return parseCreatedAtCache.get(val)
+    let result = 0
+    if (!val) result = 0
+    else if (val instanceof Date) result = val.getTime()
+    else if (typeof val === 'number') result = val
+    else if (typeof val === 'string') {
       const iso = val.includes('T') ? val : val.replace(' ', 'T')
       const t = new Date(iso).getTime()
-      if (!isNaN(t)) return t
-      const t2 = new Date(val).getTime()
-      return isNaN(t2) ? 0 : t2
+      if (!isNaN(t)) result = t
+      else {
+        const t2 = new Date(val).getTime()
+        result = isNaN(t2) ? 0 : t2
+      }
+    } else {
+      try {
+        const t = new Date(val).getTime()
+        result = isNaN(t) ? 0 : t
+      } catch {
+        result = 0
+      }
     }
-    try {
-      const t = new Date(val).getTime()
-      return isNaN(t) ? 0 : t
-    } catch {
-      return 0
-    }
+    parseCreatedAtCache.set(val, result)
+    return result
   }
 
   function format_time(time, secondTime) {
+    const cacheKey = `${time}|${secondTime}`
+    if (formatTimeCache.has(cacheKey)) return formatTimeCache.get(cacheKey)
     const secondsTimeTrack = secondTime ? time : toSeconds(time)
     const hours = Math.floor(secondsTimeTrack / 3600)
     const minutes = Math.floor((secondsTimeTrack % 3600) / 60)
     const seconds = Math.floor(secondsTimeTrack % 60)
-    return `${hours > 0 ? hours + 'h ' : ''}${minutes > 0 ? minutes + 'm ' : ''}${seconds > 0 ? seconds + 's' : ''}`
+    const result = `${hours > 0 ? hours + 'h ' : ''}${minutes > 0 ? minutes + 'm ' : ''}${seconds > 0 ? seconds + 's' : ''}`
+    formatTimeCache.set(cacheKey, result)
+    return result
   }
 
   function bytesToSize(bytes) {
+    if (bytesToSizeCache.has(bytes)) return bytesToSizeCache.get(bytes)
     var sizes = ['B', 'K', 'M', 'G', 'T', 'P']
+    var b = bytes
     for (var i = 0; i < sizes.length; i++) {
-      if (bytes <= 1024) {
-        return Math.round(bytes) + ' ' + sizes[i]
-      } else {
-        bytes = parseFloat(bytes / 1024).toFixed(2)
+      if (b <= 1024) {
+        const result = Math.round(b) + ' ' + sizes[i]
+        bytesToSizeCache.set(bytes, result)
+        return result
       }
+      b = parseFloat(b / 1024).toFixed(2)
     }
-    return bytes + ' P'
+    const result = b + ' P'
+    bytesToSizeCache.set(bytes, result)
+    return result
   }
 
   function toSeconds(timemark) {
@@ -406,11 +487,11 @@
   }
 
   function siteColor(site) {
-    const color = sites.find((it) => it.value.toLowerCase() === site.toLowerCase())?.color
-    if (color) {
-      return color
-    }
-    return '#242424b0'
+    if (siteColorCache.has(site)) return siteColorCache.get(site)
+    const color =
+      sites.find((it) => it.value.toLowerCase() === site.toLowerCase())?.color || '#242424b0'
+    siteColorCache.set(site, color)
+    return color
   }
 
   function updateList(v) {
@@ -1281,7 +1362,7 @@
 </div>
 
 <main
-  class="h-full flex flex-col justify-center items-center text-sm"
+  class="w-full h-full flex flex-col justify-center items-center text-sm"
   ondragover={handleDragOver}
   ondragleave={handleDragLeave}
   ondrop={handleDrop}
@@ -1880,10 +1961,19 @@
     </div>
   {/if}
 
-  <div class="w-full flex-1 mt-[12em] px-6 pb-8 overflow-y-auto custom-scrollbar scroll">
+  <div
+    bind:this={listContainer}
+    class="w-full flex-1 mt-[12em] px-6 pb-8 overflow-y-auto custom-scrollbar scroll relative"
+    onscroll={handleScroll}
+  >
+    <span
+      class="fixed left-0 bottom-0 m-6 z-20 px-3 py-1.5 bg-[#1B1B1B]/60 border-[#2d2d2d] text-sm font-medium rounded-full backdrop-blur-sm border shadow-lg"
+    >
+      {locallist.length} videos
+    </span>
     {#if batchProgress.total > 0}
       <span
-        class="px-2 py-1 bg-[#1a2a4a] text-[#60a5fa] text-xs font-medium rounded-full absolute bottom-0 left-0 m-2 z-10"
+        class="fixed left-0 bottom-0 m-6 mb-16 z-20 px-3 py-1.5 bg-[#1B1B1B]/60 border-[#2d2d2d] text-sm font-medium rounded-full backdrop-blur-sm border shadow-lg"
       >
         batch: {batchProgress.processed}/{batchProgress.total}
       </span>
@@ -2006,7 +2096,7 @@
           </div>
         </div>
       {/if}
-      {#each filteredListDisplay as item}
+      {#each paginatedListWithoutCurrent as item (item.id ?? item.tempid)}
         <div
           class="group bg-[#1e1e1e] border border-[#2d2d2d] hover:border-[#3d3d3d] rounded-xl p-3 transition-all duration-200"
         >
@@ -2280,6 +2370,11 @@
           </div>
         </div>
       {/each}
+      {#if loadMore}
+        <div class="col-span-full text-center py-4">
+          <span class="text-gray-500 text-sm">Loading more...</span>
+        </div>
+      {/if}
     </div>
   </div>
   {#if window_video}
@@ -2305,13 +2400,20 @@
             class="w-full md:w-2/3 p-5 border-b md:border-b-0 md:border-r border-[#3a3a3a] bg-[#252525]/50 overflow-hidden"
           >
             <div class="aspect-video bg-black rounded-lg overflow-hidden">
-              <Player
-                useEmbed={settings.use_embed}
-                embedUrl={embed}
-                src={video_test}
-                poster={thumb_video}
-                title={title_video}
-              />
+              {#if PlayerComponent}
+                <svelte:component
+                  this={PlayerComponent}
+                  useEmbed={settings.use_embed}
+                  embedUrl={embed}
+                  src={video_test}
+                  poster={thumb_video}
+                  title={title_video}
+                />
+              {:else}
+                <div class="w-full h-full flex items-center justify-center bg-black">
+                  <div class="animate-pulse text-gray-500">Loading player...</div>
+                </div>
+              {/if}
             </div>
             <div class="mt-4">
               <h3 class="text-white font-medium text-lg truncate">{title_video}</h3>
