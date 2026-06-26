@@ -77,6 +77,9 @@
   let url_video = $state('')
   let window_video = $state(false)
   let telegram_download = $state(false)
+  let subtitle_list = $state([])
+  let selected_subtitle = $state('')
+  let proxy_method_video = $state(false)
 
   // --- UI State ---
   let searchQuery = $state('')
@@ -504,15 +507,27 @@
       url_video = v.url
       embed = v.embed
       referer = v.referer
+      proxy_method_video = v.proxy_method || false
       quality_list =
         v.list_quality && v.list_quality.length > 0
           ? v.list_quality.sort((a, b) => b.quality - a.quality)
           : [{ url: '', quality: 'original', size: '' }]
       selected_quality = quality_list[0]?.url || ''
+      subtitle_list = v.subtitles || []
+      selected_subtitle = ''
 
       setTimeout(() => {
         getdata = false
       }, 1500)
+    }
+  }
+
+  function handleDuration(seconds) {
+    if (seconds > 0 && (!time_video || time_video === '0:0:0' || time_video === '')) {
+      const h = Math.floor(seconds / 3600)
+      const m = Math.floor((seconds % 3600) / 60)
+      const s = Math.floor(seconds % 60)
+      time_video = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
     }
   }
 
@@ -599,6 +614,7 @@
             value: ext.config.name,
             label: ext.config.name,
             color: ext.config.color,
+            proxy_method: ext.config.proxy_method || false,
             requiresExtension: true
           })
         }
@@ -705,6 +721,9 @@
     title_video = ''
     embed = ''
     referer = ''
+    proxy_method_video = false
+    subtitle_list = []
+    selected_subtitle = ''
     getdata = true
     window.electron.ipcRenderer.send('getVideo', { url: url })
     notifications.info('Obtaining data', { duration: 2000 })
@@ -736,6 +755,18 @@
       locallist = [newItem, ...locallist]
 
       window_close()
+      let subtitleUrl = ''
+      let subtitleLanguage = ''
+      let subtitlesAll = []
+      if (selected_subtitle === 'all') {
+        subtitlesAll = subtitle_list
+      } else if (selected_subtitle) {
+        const subItem = subtitle_list.find((s) => s.url === selected_subtitle)
+        if (subItem) {
+          subtitleUrl = subItem.url
+          subtitleLanguage = subItem.language
+        }
+      }
       window.electron.ipcRenderer.send('getCheck', {
         title: title_video,
         thumb: thumb_video,
@@ -751,7 +782,11 @@
         tempid: tempid,
         duration: time_video,
         referer: referer,
-        quality: qualityItem ? qualityItem.quality : 'original'
+        quality: qualityItem ? qualityItem.quality : 'original',
+        subtitle_url: subtitleUrl,
+        subtitle_language: subtitleLanguage,
+        subtitles_all: subtitlesAll,
+        proxy_method: proxy_method_video
       })
       url = ''
       window.document.querySelector('.scroll').scrollTo({ top: 0 })
@@ -1087,8 +1122,9 @@
             value={site.value}
             class="bg-[#1B1B1B]"
             disabled={site.requiresExtension && !isExtensionLoaded(site.value)}
+            title={site.proxy_method ? 'Uses local proxy to bypass Cloudflare/CDN protection' : ''}
           >
-            {site.label}
+            {site.label}{site.proxy_method ? ' [PROXY]' : ''}
           </option>
         {/each}
       </select>
@@ -1894,6 +1930,9 @@
                       <div>
                         <p class="text-sm font-medium text-white">
                           {name.replace('Extension', '')}
+                          {#if info.config?.proxy_method}
+                            <span class="inline-flex items-center px-1.5 py-0.5 ml-1 rounded text-[10px] font-semibold bg-amber-500/20 text-amber-400 border border-amber-500/30" title="Downloads segments via browser to bypass Cloudflare/CDN protection">PROXY</span>
+                          {/if}
                         </p>
                         <p class="text-xs text-gray-400">
                           Domains: {info.domains.join(', ')}
@@ -2408,6 +2447,8 @@
                   src={video_test}
                   poster={thumb_video}
                   title={title_video}
+                  onDuration={handleDuration}
+                  subtitles={subtitle_list}
                 />
               {:else}
                 <div class="w-full h-full flex items-center justify-center bg-black">
@@ -2416,7 +2457,14 @@
               {/if}
             </div>
             <div class="mt-4">
-              <h3 class="text-white font-medium text-lg truncate">{title_video}</h3>
+              <div class="flex items-center gap-2">
+                <h3 class="text-white font-medium text-lg truncate">{title_video}</h3>
+                {#if proxy_method_video}
+                  <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-amber-500/20 text-amber-400 border border-amber-500/30 shrink-0" title="Downloads segments via browser to bypass Cloudflare/CDN protection">
+                    PROXY
+                  </span>
+                {/if}
+              </div>
               <p class="text-gray-400 text-sm mt-1">Video Duration: {format_time(time_video)}</p>
             </div>
           </div>
@@ -2489,6 +2537,41 @@
                   </div>
                 </div>
               </div>
+
+              {#if subtitle_list.length > 0}
+                <div class="space-y-2">
+                  <span class="block text-sm font-medium text-gray-300 mb-1">Subtitle</span>
+                  <div class="relative">
+                    <select
+                      class="w-full bg-[#2d2d2d] border border-[#3a3a3a] text-white text-sm rounded-lg focus:border-[#FF9027] block p-2.5 appearance-none cursor-pointer pr-8"
+                      bind:value={selected_subtitle}
+                    >
+                      <option value="" class="bg-[#2d2d2d] text-white">None</option>
+                      <option value="all" class="bg-[#2d2d2d] text-white">All</option>
+                      {#each subtitle_list as sub}
+                        <option value={sub.url} class="bg-[#2d2d2d] text-white">
+                          {sub.name} ({sub.language})
+                        </option>
+                      {/each}
+                    </select>
+                    <div class="absolute inset-y-0 right-3 flex items-center pointer-events-none">
+                      <svg
+                        class="w-4 h-4 text-gray-400"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          stroke-width="2"
+                          d="M19 9l-7 7-7-7"
+                        />
+                      </svg>
+                    </div>
+                  </div>
+                </div>
+              {/if}
 
               <button
                 class="w-full py-3 px-4 rounded-lg font-medium text-white transition-all duration-200 flex items-center justify-center gap-2 {getdata

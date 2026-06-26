@@ -28,6 +28,7 @@ import { setupAutoUpdater } from './autoUpdater.js'
 import { randomUUID } from 'crypto'
 import logger from './logger.js'
 import { init } from './telegramBot.js'
+import { destroyProxyWindow, downloadHlsToMp4, cleanupTempFile } from '../../lib/proxyDownloader.js'
 
 const documentsPath = app.getPath('documents')
 const url = require('node:url')
@@ -82,25 +83,42 @@ function runFfmpegDownload(
   opts = { mapAudio: true },
   onCmd
 ) {
-  return new Promise((resolve, reject) => {
+  return new Promise(async (resolve, reject) => {
+    let tempFile = null
+    let actualSrcUrl = srcUrl
+
+    if (opts?.proxy_method && srcUrl && (srcUrl.includes('.m3u8') || srcUrl.includes('/m3u8/'))) {
+      try {
+        tempFile = await downloadHlsToMp4(srcUrl, documentsPath, onProgress)
+        actualSrcUrl = tempFile.split(path.sep).join('/')
+      } catch (err) {
+        logger.error('Proxy download failed, falling back to direct:', err.message)
+      }
+    }
+
     const baseOpts =
       opts && opts.mapAudio
         ? ['-c', 'copy', '-map', '0:v:0', '-map', '0:a:0?', '-threads', local_settings.threads]
         : ['-c', 'copy', '-map', '0:v:0', '-threads', local_settings.threads]
 
-    const inputOpts = [
-      '-timeout',
-      '10000000',
-      '-user_agent',
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-    ]
+    const inputOpts = []
 
-    if (opts && opts.referer) {
-      inputOpts.unshift('-referer', opts.referer)
+    if (actualSrcUrl.startsWith('http')) {
+      inputOpts.push('-timeout', '10000000', '-user_agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36')
+      if (opts && opts.referer) {
+        inputOpts.unshift('-referer', opts.referer)
+      }
+    }
+
+    if (tempFile && actualSrcUrl.endsWith('.mp4')) {
+      inputOpts.push('-f', 'mp4')
+    } else if (tempFile) {
+      inputOpts.unshift('-protocol_whitelist', 'file,http,https,tcp,tls')
+      inputOpts.push('-allowed_extensions', 'ALL')
     }
 
     const cmd = ffmpeg()
-      .input(srcUrl)
+      .input(actualSrcUrl)
       .inputOptions(inputOpts)
 
     if (opts && opts.subtitlesAll && opts.subtitlesAll.length > 0) {
@@ -159,8 +177,14 @@ function runFfmpegDownload(
         onCmd(cmd)
       } catch {}
     }
-    cmd.on('end', () => resolve())
-    cmd.on('error', (err) => reject(err))
+    cmd.on('end', () => {
+      cleanupTempFile(tempFile)
+      resolve()
+    })
+    cmd.on('error', (err) => {
+      cleanupTempFile(tempFile)
+      reject(err)
+    })
     cmd.run()
   })
 }
@@ -419,7 +443,8 @@ async function startJob(job) {
     fromTelegram,
     subtitle_url,
     subtitle_language,
-    subtitles_all
+    subtitles_all,
+    proxy_method
   } = job
 
   if (!video_src || typeof video_src !== 'string') {
@@ -532,7 +557,8 @@ async function startJob(job) {
         referer,
         subtitleUrl: subtitle_url || '',
         subtitleLanguage: subtitle_language || '',
-        subtitlesAll: subtitles_all || []
+        subtitlesAll: subtitles_all || [],
+        proxy_method: proxy_method || false
       },
       (cmd) => {
         if (activeJobs[tempid]) activeJobs[tempid].cmd = cmd
@@ -1224,7 +1250,7 @@ app.whenReady().then(async () => {
   })
 
   ipcMain.on('getCheck', async (e, v) => {
-    const { title, format, thumb, site, url, video_src, tempid, duration, quality, referer, subtitle_url, subtitle_language, subtitles_all } = v
+    const { title, format, thumb, site, url, video_src, tempid, duration, quality, referer, subtitle_url, subtitle_language, subtitles_all, proxy_method } = v
 
     if (title && format && site && url && video_src) {
       await enqueueDownload({
@@ -1240,7 +1266,8 @@ app.whenReady().then(async () => {
         referer,
         subtitle_url: subtitle_url || '',
         subtitle_language: subtitle_language || '',
-        subtitles_all: subtitles_all || []
+        subtitles_all: subtitles_all || [],
+        proxy_method: proxy_method || false
       })
     }
   })
@@ -1275,7 +1302,8 @@ app.whenReady().then(async () => {
         embed: videoData.embed || '',
         status: videoData.status || 404,
         force_type: videoData.force_type,
-        referer: videoData.referer
+        referer: videoData.referer,
+        proxy_method: videoData.proxy_method || false
       }
       e.reply('getVideo', videoObject)
     } catch (error) {
@@ -1292,6 +1320,7 @@ app.whenReady().then(async () => {
 })
 
 app.on('window-all-closed', () => {
+  destroyProxyWindow()
   if (process.platform !== 'darwin') {
     app.quit()
   }
