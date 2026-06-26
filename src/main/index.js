@@ -88,11 +88,6 @@ function runFfmpegDownload(
         ? ['-c', 'copy', '-map', '0:v:0', '-map', '0:a:0?', '-threads', local_settings.threads]
         : ['-c', 'copy', '-map', '0:v:0', '-threads', local_settings.threads]
 
-    if (local_settings.custom_ffmpeg_params) {
-      const extra = local_settings.custom_ffmpeg_params.trim().split(/\s+/).filter(Boolean)
-      baseOpts.push(...extra)
-    }
-
     const inputOpts = [
       '-timeout',
       '10000000',
@@ -107,7 +102,48 @@ function runFfmpegDownload(
     const cmd = ffmpeg()
       .input(srcUrl)
       .inputOptions(inputOpts)
-      .outputOptions(baseOpts)
+
+    if (opts && opts.subtitlesAll && opts.subtitlesAll.length > 0) {
+      let inputIdx = 1
+      for (const sub of opts.subtitlesAll) {
+        if (!sub || !sub.url) continue
+        const subInputOpts = [
+          '-timeout', '10000000',
+          '-user_agent',
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        ]
+        if (opts && opts.referer) {
+          subInputOpts.unshift('-referer', opts.referer)
+        }
+        cmd.input(sub.url).inputOptions(subInputOpts)
+        baseOpts.push('-map', `${inputIdx}:0?`)
+        if (sub.language) {
+          baseOpts.push('-metadata:s:s:' + (inputIdx - 1), `language=${sub.language}`)
+        }
+        inputIdx++
+      }
+    } else if (opts && opts.subtitleUrl) {
+      const subInputOpts = [
+        '-timeout', '10000000',
+        '-user_agent',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+      ]
+      if (opts && opts.referer) {
+        subInputOpts.unshift('-referer', opts.referer)
+      }
+      cmd.input(opts.subtitleUrl).inputOptions(subInputOpts)
+      baseOpts.push('-map', '1:0?')
+      if (opts.subtitleLanguage) {
+        baseOpts.push('-metadata:s:s:0', `language=${opts.subtitleLanguage}`)
+      }
+    }
+
+    if (local_settings.custom_ffmpeg_params) {
+      const extra = local_settings.custom_ffmpeg_params.trim().split(/\s+/).filter(Boolean)
+      baseOpts.push(...extra)
+    }
+
+    cmd.outputOptions(baseOpts)
       .output(outPath)
 
     cmd.on('progress', (info) => {
@@ -380,10 +416,13 @@ async function startJob(job) {
     quality,
     localid,
     referer,
-    fromTelegram
+    fromTelegram,
+    subtitle_url,
+    subtitle_language,
+    subtitles_all
   } = job
 
-  if (!video_src || typeof video_src !== 'string' || !video_src.startsWith('http')) {
+  if (!video_src || typeof video_src !== 'string') {
     logger.error(`Invalid video source for: ${url}`)
     return
   }
@@ -488,7 +527,13 @@ async function startJob(job) {
         }
       },
       durationSec,
-      { mapAudio: true, referer },
+      {
+        mapAudio: true,
+        referer,
+        subtitleUrl: subtitle_url || '',
+        subtitleLanguage: subtitle_language || '',
+        subtitlesAll: subtitles_all || []
+      },
       (cmd) => {
         if (activeJobs[tempid]) activeJobs[tempid].cmd = cmd
       }
@@ -607,7 +652,13 @@ function createWindow() {
       'https://*.bunkr.site/*',
       'https://*.bunkr.si/*',
       'https://*.scdn.st/*',
-      'https://*.pimpbunny.com/*'
+      'https://*.pimpbunny.com/*',
+      'https://*.hvidserv.com/*',
+      'https://*.hentaila.com/*',
+      'https://*.hentaihaven.com/*',
+      'https://*.octopusmanifest.org/*',
+      'https://*.hentaihaven.xxx/*',
+      'https://*.anpustream.com/*'
     ]
   }
 
@@ -639,6 +690,19 @@ function createWindow() {
       } else if (url.includes('sxyprn.com')) {
         details.requestHeaders['Referer'] = 'https://sxyprn.com/'
         details.requestHeaders['Range'] = 'bytes=0-'
+      } else if (url.includes('octopusmanifest.org')) {
+        details.requestHeaders['Referer'] = ''
+        details.requestHeaders['origin'] = 'https://hentaihaven.com'
+      } else if (url.includes('hvidserv.com')) {
+        details.requestHeaders['Referer'] = 'https://cdn.hvidserv.com'
+              details.requestHeaders['Range'] = 'bytes=0-'
+        details.requestHeaders['origin'] = ''
+      } else if (url.includes('hentaihaven.com') || url.includes('hentaihaven.xxx')) {
+          details.requestHeaders['Referer'] = !url.includes('hentaihaven.xxx') ? 'https://hentaihaven.com' : 'https://hentaihaven.xxx'
+
+      } else if (url.includes('anpustream.com')) {
+        details.requestHeaders['Referer'] = ''
+        details.requestHeaders['Range'] = 'bytes=0-'
       } else if (
         url.includes('bunkr.cr') ||
         url.includes('bunkr.site') ||
@@ -656,6 +720,23 @@ function createWindow() {
       }
 
       callback({ requestHeaders: details.requestHeaders })
+    } else {
+      callback({ cancel: false })
+    }
+  })
+
+  session.defaultSession.webRequest.onHeadersReceived(filter, (details, callback) => {
+    if (details && details.responseHeaders) {
+      delete details.responseHeaders['access-control-allow-origin']
+      delete details.responseHeaders['Access-Control-Allow-Origin']
+      delete details.responseHeaders['access-control-allow-methods']
+      delete details.responseHeaders['Access-Control-Allow-Methods']
+      delete details.responseHeaders['access-control-allow-headers']
+      delete details.responseHeaders['Access-Control-Allow-Headers']
+      details.responseHeaders['Access-Control-Allow-Origin'] = ['*']
+      details.responseHeaders['Access-Control-Allow-Methods'] = ['GET, POST, OPTIONS']
+      details.responseHeaders['Access-Control-Allow-Headers'] = ['*']
+      callback({ responseHeaders: details.responseHeaders })
     } else {
       callback({ cancel: false })
     }
@@ -696,25 +777,32 @@ function createWindow() {
   })
 
   let localpos = { x: 0, y: 0 }
-  ipcMain.on('setState', (e, v) => {
-    v == 'min' && !mainWindow.isMinimized() && mainWindow.minimize()
 
-    if (v == 'max' && !max) {
-      localpos.x = mainWindow.getBounds().x
-      localpos.y = mainWindow.getBounds().y
-      mainWindow.maximize()
-      mainWindow.focus()
-      max = true
-    } else if (v == 'max' && max) {
-      max = false
-      mainWindow.setBounds({
-        x: localpos.x,
-        y: localpos.y,
-        width: BoundsWin.width,
-        height: BoundsWin.height
-      })
+  mainWindow.on('maximize', () => {
+    max = true
+  })
+
+  mainWindow.on('unmaximize', () => {
+    max = false
+  })
+
+  ipcMain.on('setState', (e, v) => {
+    if (v == 'min') {
+      if (!mainWindow.isMinimized()) {
+        mainWindow.minimize()
+      }
+    } else if (v == 'max') {
+      if (mainWindow.isMaximized()) {
+        mainWindow.unmaximize()
+      } else {
+        localpos.x = mainWindow.getBounds().x
+        localpos.y = mainWindow.getBounds().y
+        mainWindow.maximize()
+        mainWindow.focus()
+      }
+    } else if (v == 'close') {
+      app.quit()
     }
-    v == 'close' && app.quit()
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
@@ -787,6 +875,7 @@ app.whenReady().then(async () => {
         video_test: videoData.video_test || [],
         thumb: videoData.thumb || '',
         list_quality: videoData.list_quality || [],
+        subtitles: videoData.subtitles || [],
         time: videoData.time || '0:0:0',
         embed: videoData.embed || '',
         status: videoData.status || 404,
@@ -956,6 +1045,8 @@ app.whenReady().then(async () => {
       quality: v.quality || '',
       duration: v.time || '0:0:0',
       referer: v.referer || '',
+      subtitle_url: v.subtitle_url || '',
+      subtitle_language: v.subtitle_language || '',
       tempid: randomUUID(),
       localid: 0,
       status: 'pending',
@@ -1133,7 +1224,7 @@ app.whenReady().then(async () => {
   })
 
   ipcMain.on('getCheck', async (e, v) => {
-    const { title, format, thumb, site, url, video_src, tempid, duration, quality, referer } = v
+    const { title, format, thumb, site, url, video_src, tempid, duration, quality, referer, subtitle_url, subtitle_language, subtitles_all } = v
 
     if (title && format && site && url && video_src) {
       await enqueueDownload({
@@ -1146,7 +1237,10 @@ app.whenReady().then(async () => {
         tempid,
         duration,
         quality,
-        referer
+        referer,
+        subtitle_url: subtitle_url || '',
+        subtitle_language: subtitle_language || '',
+        subtitles_all: subtitles_all || []
       })
     }
   })
@@ -1176,6 +1270,7 @@ app.whenReady().then(async () => {
         video_test: videoData.video_test || [],
         thumb: videoData.thumb || '',
         list_quality: videoData.list_quality || [],
+        subtitles: videoData.subtitles || [],
         time: videoData.time || '0:0:0',
         embed: videoData.embed || '',
         status: videoData.status || 404,
