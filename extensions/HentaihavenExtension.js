@@ -12,7 +12,7 @@ export default class HentaihavenExtension {
       proxy_method: true,
       vtt_support: true,
       quality_support: ['1080', '720', '480'],
-      version: '1.0.0'
+      version: '1.0.1'
     }
     this.extension = new ExtensionExtra(this.config)
     this.fetchcookie = this.extension.fetchcookies()
@@ -219,24 +219,23 @@ export default class HentaihavenExtension {
       }
     }
 
-
-    let finalVideoUrl = videoUrl.replace('playlist.m3u8', 'playlist_vp9.m3u8')
-    const cleaned = await this.cleanMasterPlaylist(finalVideoUrl)
+    const cleaned = await this.cleanMasterPlaylist(videoUrl)
 
     const listQuality = cleaned.qualities && cleaned.qualities.length > 0
-      ? cleaned.qualities.map(q => ({ ...q, url: finalVideoUrl }))
-      : [{ url: finalVideoUrl, quality: 'original', size: '' }]
+      ? cleaned.qualities
+      : [{ url: videoUrl, quality: 'original', size: '' }]
+
+    const bestQualityUrl = listQuality[0]?.url || videoUrl
 
     return this.extension.createResponse({
       embed: playerUrl,
-      video_test: cleaned.url,
+      video_test: bestQualityUrl,
       list_quality: listQuality,
       subtitles: cleaned.subtitles,
       title: title.replace(/[^a-zA-Z0-9 ]/g, ''),
       time: '',
       thumb,
-      status: req.status,
-      force_type: 'application/x-mpegurl'
+      status: req.status
     })
   }
 }
