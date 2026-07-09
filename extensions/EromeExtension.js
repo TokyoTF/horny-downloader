@@ -32,7 +32,8 @@ export default class EromeExtension {
 
     if (/^https?:\/\/v\d+\.erome\.com\/.+\.mp4/i.test(cleanUrl)) {
       const thumbUrl = this.buildThumbFromCdnUrl(cleanUrl)
-      const title = albumTitle || this.buildTitleFromCdnUrl(cleanUrl)
+      const mediaHash = this.extractMediaHashFromCdnUrl(cleanUrl)
+      const title = albumTitle ? `${albumTitle} - ${mediaHash}` : mediaHash
       return this.extension.createResponse({
         embed: '',
         video_test: cleanUrl,
@@ -243,6 +244,16 @@ export default class EromeExtension {
       const mediaHash = filename.replace(/_\d+p\.mp4$/, '')
       const albumHash = parts[parts.length - 1] || ''
       return `${albumHash} - ${mediaHash}`
+    } catch {
+      return 'Erome Video'
+    }
+  }
+
+  extractMediaHashFromCdnUrl(url) {
+    try {
+      const urlObj = new URL(url)
+      const filename = urlObj.pathname.split('/').pop()
+      return filename.replace(/_\d+p\.mp4$/, '')
     } catch {
       return 'Erome Video'
     }
