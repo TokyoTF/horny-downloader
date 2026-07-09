@@ -684,7 +684,8 @@ function createWindow() {
       'https://*.hentaihaven.com/*',
       'https://*.octopusmanifest.org/*',
       'https://*.hentaihaven.xxx/*',
-      'https://*.anpustream.com/*'
+      'https://*.anpustream.com/*',
+      'https://*.erome.com/*'
     ]
   }
 
@@ -743,6 +744,8 @@ function createWindow() {
         details.requestHeaders['Origin'] = siteDetect
       } else if (url.includes('scdn.st')) {
         details.requestHeaders['Referer'] = 'https://bunkr.cr/'
+      } else if (url.includes('erome.com')) {
+        details.requestHeaders['Referer'] = 'https://www.erome.com/'
       }
 
       callback({ requestHeaders: details.requestHeaders })
@@ -1162,6 +1165,7 @@ app.whenReady().then(async () => {
         const videoData = await registry.extractVideo(url)
         if (videoData.is_batch && videoData.batch_urls && videoData.batch_urls.length > 0) {
           logger.debug(`Skipping album URL in batch: ${url}`)
+          index++
           continue
         }
 
@@ -1203,6 +1207,8 @@ app.whenReady().then(async () => {
             decodeURIComponent(escape(videoData.title.replace(/[^a-zA-Z0-9 ]/g, ''))) ||
             'Unknown Title'
 
+          index++
+
           const job = {
             title: title,
             thumb: videoData.thumb || '',
@@ -1219,18 +1225,19 @@ app.whenReady().then(async () => {
           await enqueueDownload(job)
         } else {
           logger.warn(`No valid video source for URL: ${url}`)
+          index++
           if (mainWindow) {
             mainWindow.webContents.send('batch-progress', {
               total: urls.length,
-              processed: index + 1,
-              remaining: urls.length - index - 1,
+              processed: index,
+              remaining: urls.length - index,
               failed: url
             })
           }
         }
-        index++
       } catch (err) {
         logger.error(`Failed to process batch url ${url}:`, err)
+        index++
       }
     }
   }
