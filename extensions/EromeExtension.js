@@ -19,17 +19,20 @@ export default class EromeExtension {
 
   async extract(url) {
     let duration = ''
+    let albumTitle = ''
     let cleanUrl = url
     try {
       const urlObj = new URL(url)
       duration = urlObj.searchParams.get('duration') || ''
+      albumTitle = urlObj.searchParams.get('title') || ''
       urlObj.searchParams.delete('duration')
+      urlObj.searchParams.delete('title')
       cleanUrl = urlObj.toString()
     } catch {}
 
     if (/^https?:\/\/v\d+\.erome\.com\/.+\.mp4/i.test(cleanUrl)) {
       const thumbUrl = this.buildThumbFromCdnUrl(cleanUrl)
-      const title = this.buildTitleFromCdnUrl(cleanUrl)
+      const title = albumTitle || this.buildTitleFromCdnUrl(cleanUrl)
       return this.extension.createResponse({
         embed: '',
         video_test: cleanUrl,
@@ -79,7 +82,13 @@ export default class EromeExtension {
 
     return this.extension.createResponse({
       is_batch: true,
-      batch_urls: videos.map((v) => v.duration ? `${v.url}?duration=${encodeURIComponent(v.duration)}` : v.url),
+      batch_urls: videos.map((v) => {
+        const params = new URLSearchParams()
+        if (v.duration) params.set('duration', v.duration)
+        if (title) params.set('title', title)
+        const qs = params.toString()
+        return qs ? `${v.url}?${qs}` : v.url
+      }),
       title,
       status: req.status
     })
