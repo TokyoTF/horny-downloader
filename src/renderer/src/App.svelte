@@ -980,7 +980,7 @@
 {/if}
 
 {#if batchModalOpen}
-  <div class="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+  <div class="fixed inset-0 bg-black/70 flex items-center justify-center z-99999 p-4">
     <div class="bg-[#252525] rounded-lg shadow-xl max-w-sm w-full p-6 border border-[#3d3d3d]">
       <h3 class="text-lg font-semibold text-white mb-1">Batch Import</h3>
       <p class="text-gray-400 text-sm mb-4">Found {batchUrls.length} links to process.</p>
