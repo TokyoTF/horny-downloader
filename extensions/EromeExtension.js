@@ -29,11 +29,12 @@ export default class EromeExtension {
 
     if (/^https?:\/\/v\d+\.erome\.com\/.+\.mp4/i.test(cleanUrl)) {
       const thumbUrl = this.buildThumbFromCdnUrl(cleanUrl)
+      const title = this.buildTitleFromCdnUrl(cleanUrl)
       return this.extension.createResponse({
         embed: '',
         video_test: cleanUrl,
         list_quality: [{ quality: 'original', url: cleanUrl }],
-        title: 'Erome Video',
+        title,
         time: duration || '',
         thumb: thumbUrl,
         status: 200,
@@ -222,6 +223,19 @@ export default class EromeExtension {
       return `https://s${cdnNum}.erome.com${parts.join('/')}/thumbs/${mediaHash}.jpg`
     } catch {
       return ''
+    }
+  }
+
+  buildTitleFromCdnUrl(url) {
+    try {
+      const urlObj = new URL(url)
+      const parts = urlObj.pathname.split('/').filter(Boolean)
+      const filename = parts.pop()
+      const mediaHash = filename.replace(/_\d+p\.mp4$/, '')
+      const albumHash = parts[parts.length - 1] || ''
+      return `${albumHash} - ${mediaHash}`
+    } catch {
+      return 'Erome Video'
     }
   }
 }
