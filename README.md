@@ -119,7 +119,7 @@ export default class NewSiteExtension {
 - Pimpbunny
 - Hentaihaven
 - Hentaila
-- Porndig
+
 
 ## 🛠️ Installation for dev
 
