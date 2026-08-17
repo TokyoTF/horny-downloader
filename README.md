@@ -113,9 +113,13 @@ export default class NewSiteExtension {
 - PornOne
 - Beeg
 - Eporner
+- Erome
 - Sxyprn
 - Bunkr
 - Pimpbunny
+- Hentaihaven
+- Hentaila
+- Porndig
 
 ## 🛠️ Installation for dev
 
