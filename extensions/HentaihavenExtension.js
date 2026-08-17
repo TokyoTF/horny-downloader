@@ -12,7 +12,7 @@ export default class HentaihavenExtension {
       proxy_method: true,
       vtt_support: true,
       quality_support: ['1080', '720', '480'],
-      version: '1.0.1'
+      version: '1.1.1'
     }
     this.extension = new ExtensionExtra(this.config)
     this.fetchcookie = this.extension.fetchcookies()
@@ -40,7 +40,7 @@ export default class HentaihavenExtension {
       e = atob(e)
       return JSON.parse(e)
     } catch (err) {
-      console.error('Error decoding token:', err)
+      this.extension.logger.error('Error decoding token:', err)
       return null
     }
   }
@@ -140,7 +140,7 @@ export default class HentaihavenExtension {
 
       return { url: dataUrl, m3u8Content: cleanedM3u8, subtitles, qualities }
     } catch (err) {
-      console.error('[HentaiHaven] Error cleaning master playlist:', err)
+      this.extension.logger.error('[HentaiHaven] Error cleaning master playlist:', err)
       return { url: masterUrl, subtitles: [], qualities: [] }
     }
   }
@@ -200,12 +200,12 @@ export default class HentaihavenExtension {
         if (secureToken && secureToken.startsWith('sha512-')) {
           const config = await this.decodeConfig(secureToken)
           if (config && config.en && config.iv && config.uri) {
-            console.log('[HentaiHaven] Decoded config URI:', config.uri)
+            this.extension.logger.debug('[HentaiHaven] Decoded config URI:', config.uri)
             const apiData = await this.fetchPlayerData(config)
-            console.log('[HentaiHaven] API response:', JSON.stringify(apiData).substring(0, 500))
+            this.extension.logger.debug('[HentaiHaven] API response:', JSON.stringify(apiData).substring(0, 500))
             if (apiData?.data?.sources?.length > 0) {
               videoUrl = apiData.data.sources[0].src
-              console.log('[HentaiHaven] Video URL:', videoUrl)
+              this.extension.logger.debug('[HentaiHaven] Video URL:', videoUrl)
             }
           }
         }
@@ -215,7 +215,7 @@ export default class HentaihavenExtension {
           videoUrl = $p('meta[property="og:video"]').attr('content') || ''
         }
       } catch (err) {
-        console.error('HentaiHaven extraction error:', err)
+        this.extension.logger.error('HentaiHaven extraction error:', err)
       }
     }
 

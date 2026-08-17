@@ -11,7 +11,7 @@ export default class SxyprnExtension {
       format_support: ['mp4'],
       vtt_support: false,
       quality_support: ['original'],
-      version: '1.0.2'
+      version: '1.1.2'
     }
     this.extension = new ExtensionExtra(this.config)
   }
@@ -47,10 +47,22 @@ export default class SxyprnExtension {
 
     const videoIdMatch = url.match(/\/post\/([a-z0-p]+)\.html/i)
     const videoId = videoIdMatch ? videoIdMatch[1] : null
-    const vnfoMeta = view.match(/data-vnfo='([^']+)'/)
 
-    let vnfoData = {}
-    vnfoData = JSON.parse(vnfoMeta[1])
+    let vnfoStr = null
+    const vnfoOld = view.match(/data-vnfo='([^']+)'/)
+    if (vnfoOld && vnfoOld[1] && vnfoOld[1] !== '[]') {
+      vnfoStr = vnfoOld[1]
+    } else {
+      const spanVnfo = $('span.vidsnfo').attr('data-vnfo')
+      if (spanVnfo && spanVnfo !== '[]') {
+        vnfoStr = spanVnfo.replace(/&quot;/g, '"').replace(/&amp;/g, '&')
+      }
+    }
+
+    if (!vnfoStr || !videoId) throw new Error('Could not find video data on page')
+
+    const vnfoData = JSON.parse(vnfoStr)
+    if (!vnfoData[videoId]) throw new Error('Video ID not found in vnfo data')
 
     let segments = vnfoData[videoId].split("/");
 

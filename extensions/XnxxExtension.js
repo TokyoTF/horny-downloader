@@ -11,7 +11,7 @@ export default class XnxxExtension {
       format_support: ['hls'],
       vtt_support: false,
       quality_support: ['1080', '720', '692', '480', '360', '250'],
-      version: '1.0.0'
+      version: '1.1.0'
     }
     this.extension = new ExtensionExtra(this.config)
   }
@@ -35,15 +35,10 @@ export default class XnxxExtension {
       parseInt($('meta[property="og:duration"]').attr('content'))
     )
 
-    const view_format = view
-      .slice(
-        view.indexOf('html5player.setVideoHLS(') + 'html5player.setVideoHLS('.length,
-        view.indexOf('html5player.setThumbUrl(')
-      )
-      .replace(';', '')
-      .replace(')', '')
+    const hlsMatch = view.match(/html5player\.setVideoHLS\(['"]([^'"]+)['"]\)/)
+    if (!hlsMatch) throw new Error('Could not find HLS URL in page')
 
-    const view_data = Function(`'use strict'; return (${view_format})`)()
+    const view_data = hlsMatch[1]
     const res_req = await (await fetch(view_data)).text()
 
     const res = await this.extension.parseResolutions(

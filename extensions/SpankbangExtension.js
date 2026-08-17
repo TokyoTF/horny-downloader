@@ -11,7 +11,7 @@ export default class SpankbangExtension {
       format_support: ['hls', 'mp4'],
       vtt_support: false,
       quality_support: ['4k', '1080', '720', '480', '240'],
-      version: '1.0.0'
+      version: '1.1.0'
     }
     this.extension = new ExtensionExtra(this.config)
     this.fetchcookie = this.extension.fetchcookies()
@@ -31,7 +31,48 @@ export default class SpankbangExtension {
     const view = await req.text()
     const $ = this.extension.cherrio(view)
 
-    const title_video = $('.main_content_title').attr('title')
+    if (view.includes('Just a moment') || req.status === 403) {
+      this.extension.logger.info('[Spankbang] Cloudflare detected, waiting for challenge to resolve...')
+      const proxyResp = await this.extension.cloudflareFetch(`https://${this.config.prefix_url}/${videoId}`)
+      const proxyView = await proxyResp.text()
+
+      if (!proxyView.includes('var stream_data =')) {
+        throw new Error('Cloudflare challenge not resolved')
+      }
+
+      const $p = this.extension.cherrio(proxyView)
+
+      const title_video = $p('[data-testid="video-title"]').text()
+      const durationMeta = $p('meta[property="og:video:duration"]').attr('content') || $p('meta[property="og:duration"]').attr('content')
+      const time_video = durationMeta ? this.extension.formatDuration(parseInt(durationMeta)) : ''
+
+      const view_format = proxyView
+        .slice(
+          proxyView.indexOf('var stream_data =') + 'var stream_data ='.length,
+          proxyView.lastIndexOf('var live_keywords')
+        )
+        .replace(';', '')
+      view_data = Function(`'use strict'; return (${view_format})`)()
+
+      this.config.quality_support.map((n) => {
+        let qua = !n.includes('k') ? n + 'p' : n
+        if (view_data[qua] && view_data[qua][0]) {
+          list_quality.push({ quality: n, url: view_data[qua][0] })
+        }
+      })
+
+      return this.extension.createResponse({
+        embed: `https://${this.config.prefix_url}/${videoId}/${this.config.embed_preview}`,
+        video_test: view_data.m3u8?.[0] || '',
+        list_quality,
+        title: title_video,
+        time: time_video,
+        thumb: view_data.cover_image || '',
+        status: 200
+      })
+    }
+
+    const title_video = $('[data-testid="video-title"]').text()
     const durationMeta = $('meta[property="og:video:duration"]').attr('content') || $('meta[property="og:duration"]').attr('content')
     const time_video = durationMeta ? this.extension.formatDuration(parseInt(durationMeta)) : ''
 
@@ -54,11 +95,11 @@ export default class SpankbangExtension {
 
     return this.extension.createResponse({
       embed: `https://${this.config.prefix_url}/${videoId}/${this.config.embed_preview}`,
-      video_test: view_data.m3u8[0],
+      video_test: view_data.m3u8?.[0] || '',
       list_quality,
       title: title_video,
       time: time_video,
-      thumb: view_data.cover_image,
+      thumb: view_data.cover_image || '',
       status: req.status
     })
   }

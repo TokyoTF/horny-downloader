@@ -80,6 +80,7 @@
   let subtitle_list = $state([])
   let selected_subtitle = $state('')
   let proxy_method_video = $state(false)
+  let fetching_video = $state(false)
 
   // --- UI State ---
   let searchQuery = $state('')
@@ -380,6 +381,7 @@
 
   const handleGetVideo = (e, v) => {
     getdata = true
+    fetching_video = false
 
     if (v.error) {
       notifications.error('Failed to get video data', { duration: 2000 })
@@ -725,6 +727,7 @@
     subtitle_list = []
     selected_subtitle = ''
     getdata = true
+    fetching_video = true
     window.electron.ipcRenderer.send('getVideo', { url: url })
     notifications.info('Obtaining data', { duration: 2000 })
   }
@@ -2416,6 +2419,17 @@
       {/if}
     </div>
   </div>
+  {#if fetching_video}
+    <div class="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div class="bg-[#1e1e1e] border border-[#3a3a3a] rounded-xl p-8 flex flex-col items-center gap-4 shadow-2xl">
+        <svg class="animate-spin h-10 w-10 text-[#FF9027]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+        </svg>
+        <span class="text-white text-sm font-medium">Loading video data...</span>
+      </div>
+    </div>
+  {/if}
   {#if window_video}
     <div
       class="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4"

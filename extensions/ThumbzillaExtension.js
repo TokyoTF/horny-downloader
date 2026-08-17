@@ -4,14 +4,14 @@ export default class ThumbzillaExtension {
       name: 'Thumbzilla',
       color: '#2ECC71b0',
       domains_support: ['thumbzilla.com', 'www.thumbzilla.com'],
-      domains_includes: ['/video/', '/embed/'],
+      domains_includes: ['/watch/', '/embed/'],
       embed_preview: 'embed',
       prefix_url: 'www.thumbzilla.com',
       referer: false,
       format_support: ['hls', 'mp4'],
       vtt_support: false,
       quality_support: ['1080', '720', '480', '360', '240'],
-      version: '1.0.0'
+      version: '1.1.0'
     }
     this.extension = new ExtensionExtra(this.config)
   }
@@ -20,7 +20,7 @@ export default class ThumbzillaExtension {
     let list_quality = []
 
     const videoId = this.extension.extractVideoId(url)
-    const videoUrl = `https://${this.config.prefix_url}/video/${videoId}`
+    const videoUrl = `https://${this.config.prefix_url}/watch/${videoId}`
 
     const req = await fetch(videoUrl, {
       headers: this.extension.getDefaultHeaders({
@@ -32,18 +32,10 @@ export default class ThumbzillaExtension {
     const $ = this.extension.cherrio(view)
 
     const title_video = $('meta[property="og:title"]').attr('content') || $('title').text()
-    const thumb_video = $('#videoPlayerPlaceholder img').attr('src') || ''
+    const thumb_video = $('#videoWrapper link').attr('href') || ''
 
-    let durIndex = view.indexOf('"video_duration"')
-    let lastIndex = view.indexOf('"actionTags"')
-    let time_video = this.extension.formatDuration(
-      parseInt(
-        view
-          .slice(durIndex, lastIndex)
-          .replace('"video_duration":', '')
-          .replace(',', '')
-      )
-    )
+    const durationMeta = $('meta[property="video:duration"]').attr('content')
+    let time_video = durationMeta ? this.extension.formatDuration(parseInt(durationMeta)) : ''
 
     let mediaDefs = []
     let mdIndex = view.indexOf('"mediaDefinition"')
@@ -75,16 +67,33 @@ export default class ThumbzillaExtension {
       } catch {}
     }
 
-    let temp_qualitys = []
-    mediaDefs.forEach((el) => {
-      el.format == 'hls' &&
-        temp_qualitys.push({
-          quality: el.quality,
-          url: el.videoUrl
+    const hlsEntry = mediaDefs.find(el => el.format === 'hls') || mediaDefs[0]
+    if (hlsEntry?.videoUrl) {
+      try {
+        const qReq = await fetch(hlsEntry.videoUrl, {
+          headers: this.extension.getDefaultHeaders({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36'
+          })
         })
-    })
+        if (qReq.ok) {
+          const qualities = await qReq.json()
+          if (Array.isArray(qualities)) {
+            list_quality = qualities.map(q => ({
+              quality: q.quality,
+              url: q.videoUrl
+            }))
+          }
+        }
+      } catch {}
+    }
 
-    list_quality = temp_qualitys
+    if (list_quality.length === 0) {
+      mediaDefs.forEach((el) => {
+        if (el.format === 'hls' && el.videoUrl) {
+          list_quality.push({ quality: el.quality, url: el.videoUrl })
+        }
+      })
+    }
     const video_test = list_quality.length ? list_quality[0].url : ''
 
     return this.extension.createResponse({

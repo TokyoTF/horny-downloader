@@ -12,7 +12,7 @@ export default class BunkrExtension {
       format_support: ['mp4'],
       vtt_support: false,
       quality_support: ['original'],
-      version: '1.0.3'
+      version: '1.1.3'
     }
     this.extension = new ExtensionExtra(this.config)
   }
@@ -72,8 +72,6 @@ export default class BunkrExtension {
   async extractVideo(url) {
     let list_quality = []
 
-    const videoId = this.extension.extractVideoId(url)
-
     const req = await fetch(url)
     const view = await req.text()
     const $ = this.extension.cherrio(view)
@@ -82,17 +80,28 @@ export default class BunkrExtension {
       $('h1.text-3xl').text().trim() || $('meta[property="og:title"]').attr('content')
     const thumb_video = $('video').attr('poster') || $('meta[property="og:image"]').attr('content')
 
-    const apiReq = await fetch('https://bunkr.cr/api/vs', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ slug: videoId })
-    })
-    const apiData = await apiReq.json()
+    const cdnMatch = view.match(/var jsCDN\s*=\s*"([^"]+)"/)
+    const signMatch = view.match(/var signUrl\s*=\s*"([^"]+)"/)
+    if (!cdnMatch) throw new Error('Could not find CDN URL in page')
 
-    let video_src = apiData.url
-    if (apiData.encrypted) {
-      const key = 'SECRET_KEY_' + Math.floor(apiData.timestamp / 3600)
-      video_src = this.decryptUrl(video_src, key)
+    const rawCdn = cdnMatch[1].replace(/\\\//g, '/')
+    let video_src = rawCdn
+
+    if (signMatch) {
+      try {
+        const signBase = signMatch[1].replace(/\\\//g, '/')
+        const orig = new URL(rawCdn)
+        const path = decodeURIComponent(orig.pathname)
+        const signReq = await fetch(`${signBase}?path=${encodeURIComponent(path)}`)
+        if (signReq.ok) {
+          const { token, ex } = await signReq.json()
+          orig.searchParams.set('token', token)
+          orig.searchParams.set('ex', ex)
+          video_src = orig.toString()
+        }
+      } catch (e) {
+        this.extension.logger.error('[Bunkr] Failed to sign URL:', e)
+      }
     }
 
     if (video_src) {
