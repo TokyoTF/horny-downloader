@@ -1035,6 +1035,38 @@ app.whenReady().then(async () => {
     }
   })
 
+  ipcMain.handle('list-remote-extensions', async (e, branch) => {
+    try {
+      return await extensionRegistry.listRemoteExtensions(branch || 'main')
+    } catch (error) {
+      logger.error('Error listing remote extensions:', error)
+      return []
+    }
+  })
+
+  ipcMain.handle('list-local-extensions', async () => {
+    try {
+      const extensionsDir = is.dev
+        ? path.join(process.cwd(), 'extensions')
+        : path.join(documentsPath, 'horny-downloader', 'extensions')
+      const files = readdirSync(extensionsDir)
+        .filter(f => f.endsWith('Extension.js') && f !== 'Extension.js' && f !== 'index.js')
+      return files.map(f => f.replace('Extension.js', '').toLowerCase())
+    } catch (error) {
+      logger.error('Error listing local extensions:', error)
+      return []
+    }
+  })
+
+  ipcMain.handle('install-extension', async (e, { name, branch }) => {
+    try {
+      return await extensionRegistry.installExtension(name, branch || 'main')
+    } catch (error) {
+      logger.error(`Error installing extension ${name}:`, error)
+      return false
+    }
+  })
+
   ipcMain.handle('pick-batch-file', async (e) => {
     const { filePaths } = await dialog.showOpenDialog({
       properties: ['openFile'],

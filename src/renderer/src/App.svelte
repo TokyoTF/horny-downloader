@@ -58,6 +58,8 @@
   let sites = $state([])
   let availableUpdates = $state([])
   let isCheckingUpdates = $state(false)
+  let remoteExtensions = $state([])
+  let isInstalling = $state(false)
 
   // --- Video & Download State ---
   let url = $state('')
@@ -493,8 +495,9 @@
 
   function siteColor(site) {
     if (siteColorCache.has(site)) return siteColorCache.get(site)
-    const color =
+    let color =
       sites.find((it) => it.value.toLowerCase() === site.toLowerCase())?.color || '#242424b0'
+    if (color.length === 9) color = color.slice(0, 7)
     siteColorCache.set(site, color)
     return color
   }
@@ -696,6 +699,23 @@
     }
   }
 
+  async function updateAllExtensions() {
+    const updates = [...availableUpdates]
+    if (updates.length === 0) return
+    notifications.info(`Updating ${updates.length} extensions...`, { duration: 2000 })
+    for (const ext of updates) {
+      try {
+        await window.electron.ipcRenderer.invoke('update-extension', {
+          name: ext.name,
+          branch: settings.extension_branch || 'main'
+        })
+        availableUpdates = availableUpdates.filter((u) => u.name !== ext.name)
+      } catch {}
+    }
+    notifications.success(`All extensions updated`, { duration: 2000 })
+    await reloadExtensions()
+  }
+
   async function syncExtensions() {
     try {
       const result = await window.electron.ipcRenderer.invoke('copy-extensions-to-documents')
@@ -710,6 +730,44 @@
     } catch (err) {
       console.error(err)
       notifications.error('Error syncing extensions')
+    }
+  }
+
+  async function fetchRemoteExtensions() {
+    try {
+      const allRemote = await window.electron.ipcRenderer.invoke(
+        'list-remote-extensions',
+        settings.extension_branch || 'main'
+      )
+
+      const localFiles = await window.electron.ipcRenderer.invoke('list-local-extensions')
+      const localNames = new Set(localFiles)
+
+      remoteExtensions = allRemote.filter(r => !localNames.has(r.name))
+    } catch (error) {
+      console.error('Error fetching remote extensions:', error)
+    }
+  }
+
+  async function installExtension(ext) {
+    isInstalling = true
+    try {
+      notifications.info(`Installing ${ext.displayName}...`, { duration: 2000 })
+      const success = await window.electron.ipcRenderer.invoke('install-extension', {
+        name: ext.name,
+        branch: settings.extension_branch || 'main'
+      })
+      if (success) {
+        notifications.success(`Installed ${ext.displayName}`, { duration: 2000 })
+        remoteExtensions = remoteExtensions.filter((e) => e.name !== ext.name)
+        await reloadExtensions()
+      } else {
+        notifications.error(`Failed to install ${ext.displayName}`)
+      }
+    } catch (error) {
+      notifications.error(`Error installing ${ext.displayName}`)
+    } finally {
+      isInstalling = false
     }
   }
 
@@ -1072,6 +1130,14 @@
             class="ml-1.5 px-2 py-0.5 no_move text-xs font-medium rounded-full bg-blue-600 text-white flex items-center gap-1.5 hover:bg-blue-700 transition-colors"
           >
             <span>Update Available</span>
+          </button>
+        {/if}
+        {#if availableUpdates.length > 0}
+          <button
+            onclick={updateAllExtensions}
+            class="ml-1.5 px-2 py-0.5 no_move text-xs font-medium rounded-full bg-orange-600 text-white flex items-center gap-1.5 hover:bg-orange-700 transition-colors"
+          >
+            <span>Update all extensions ({availableUpdates.length})</span>
           </button>
         {/if}
       </div>
@@ -1769,6 +1835,7 @@
                       id="setting-branch"
                       class="w-full px-3.5 py-2 bg-[#252525] border border-[#3a3a3a] hover:border-[#4a4a4a] focus:border-[#FF9027] focus:ring-2 focus:ring-[#FF9027]/30 rounded-lg text-sm text-white transition-all duration-200 appearance-none cursor-pointer"
                       bind:value={settings.extension_branch}
+                      onchange={() => { checkForUpdates(); remoteExtensions = [] }}
                     >
                       <option value="main">Main (Stable)</option>
                       <option value="dev">Dev (Beta)</option>
@@ -1968,6 +2035,49 @@
                 {#if Object.keys(extensions_status.loaded || {}).length === 0 && Object.keys(extensions_status.failed || {}).length === 0}
                   <div class="text-center py-8 text-gray-400">
                     <p class="text-sm">No extensions found</p>
+                  </div>
+                {/if}
+              </div>
+
+              <div class="w-full h-px bg-[#3a3a3a] my-4"></div>
+
+              <div class="space-y-4">
+                <div class="flex items-center justify-between">
+                  <h3 class="text-sm font-medium text-gray-300 uppercase tracking-wider">
+                    Install Extensions
+                  </h3>
+                  <button
+                    onclick={fetchRemoteExtensions}
+                    class="text-xs text-[#FF9027] hover:text-[#FF6B00] font-medium flex items-center gap-1.5 transition-colors px-2 py-1 rounded hover:bg-[#FF9027]/10"
+                  >
+                    <RefreshCw size={14} />
+                    Check Available
+                  </button>
+                </div>
+                {#if remoteExtensions.length > 0}
+                  <div class="space-y-3">
+                    {#each remoteExtensions as ext}
+                      <div class="flex items-center justify-between p-3 bg-[#252525] rounded-lg border border-[#3a3a3a]">
+                        <div class="flex items-center gap-3">
+                          <div class="w-2 h-2 bg-blue-500 rounded-full"></div>
+                          <div>
+                            <p class="text-sm font-medium text-white">{ext.displayName}</p>
+                            <p class="text-xs text-gray-400">Not installed</p>
+                          </div>
+                        </div>
+                        <button
+                          onclick={() => installExtension(ext)}
+                          disabled={isInstalling}
+                          class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-medium rounded transition-colors"
+                        >
+                          {isInstalling ? 'Installing...' : 'Install'}
+                        </button>
+                      </div>
+                    {/each}
+                  </div>
+                {:else if remoteExtensions.length === 0}
+                  <div class="text-center py-4 text-gray-400">
+                    <p class="text-sm">No more extensions found</p>
                   </div>
                 {/if}
               </div>
