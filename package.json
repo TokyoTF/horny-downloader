@@ -47,7 +47,7 @@
   "build": {
     "appId": "com.tokyotf.horny-downloader",
     "productName": "Horny Downloader",
-    "copyright": "Copyright © 2025 TokyoTF",
+    "copyright": "Copyright © 2026 TokyoTF",
     "publish": [
       {
         "provider": "github",
