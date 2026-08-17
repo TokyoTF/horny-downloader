@@ -11,7 +11,7 @@ export default class PimpbunnyExtension {
       format_support: ['mp4'],
       vtt_support: false,
       quality_support: ['1440', '1080', '720', '480', '360'],
-      version: '1.0.0'
+      version: '1.1.0'
     }
     this.extension = new ExtensionExtra(this.config)
   }
@@ -27,13 +27,14 @@ export default class PimpbunnyExtension {
     const $ = this.extension.cherrio(view)
 
     const title_video = $('meta[property="og:title"]').attr('content')
-    const thumb_video = $('meta[property="og:image"]').attr('content')
-    const videoId_num = thumb_video.split('/')[6]
+    const thumb_video = $('meta[property="og:image"]').attr('content') || ''
+    const videoId_num = thumb_video.split('/')[6] || ''
 
     const scriptMatch = view.match(
       /var\s+t[0-9a-f]+\s*=\s*\{[\s\S]*?\bvideo_id\b[\s\S]*?\bvideo_url\b[\s\S]*?\};/
     )
 
+    if (!scriptMatch) throw new Error('Could not find player config in page')
     let objStr = scriptMatch[0].replace(/^var\s+t[0-9a-f]+\s*=\s*/, '').replace(/;\s*$/, '')
     objStr = objStr.replace(/([{,]\s*)(\w+):/g, '$1"$2":').replace(/'/g, '"')
     const playerConfig = JSON.parse(objStr)
@@ -53,7 +54,7 @@ export default class PimpbunnyExtension {
       const videoUrl = playerConfig[q.field]
       const qualityText = playerConfig[q.text] || ''
 
-      if (videoUrl) {
+      if (videoUrl && typeof videoUrl === 'string') {
         let decodedUrl
         if (videoUrl.startsWith('function/')) {
           decodedUrl = this.kvsDecode(videoUrl, license_code)

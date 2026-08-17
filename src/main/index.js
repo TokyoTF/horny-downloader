@@ -28,6 +28,7 @@ import { setupAutoUpdater } from './autoUpdater.js'
 import { randomUUID } from 'crypto'
 import logger from './logger.js'
 import { init } from './telegramBot.js'
+import { destroyProxyWindow, downloadHlsToMp4, cleanupTempFile } from '../../lib/proxyDownloader.js'
 
 const documentsPath = app.getPath('documents')
 const url = require('node:url')
@@ -82,32 +83,85 @@ function runFfmpegDownload(
   opts = { mapAudio: true },
   onCmd
 ) {
-  return new Promise((resolve, reject) => {
+  return new Promise(async (resolve, reject) => {
+    let tempFile = null
+    let actualSrcUrl = srcUrl
+
+    if (opts?.proxy_method && srcUrl && (srcUrl.includes('.m3u8') || srcUrl.includes('/m3u8/'))) {
+      try {
+        tempFile = await downloadHlsToMp4(srcUrl, documentsPath, onProgress)
+        actualSrcUrl = tempFile.split(path.sep).join('/')
+      } catch (err) {
+        logger.error('Proxy download failed, falling back to direct:', err.message)
+      }
+    }
+
     const baseOpts =
       opts && opts.mapAudio
         ? ['-c', 'copy', '-map', '0:v:0', '-map', '0:a:0?', '-threads', local_settings.threads]
         : ['-c', 'copy', '-map', '0:v:0', '-threads', local_settings.threads]
+
+    const inputOpts = []
+
+    if (actualSrcUrl.startsWith('http')) {
+      inputOpts.push('-timeout', '10000000', '-user_agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36')
+      if (opts && opts.referer) {
+        inputOpts.unshift('-referer', opts.referer)
+      }
+    }
+
+    if (tempFile && actualSrcUrl.endsWith('.mp4')) {
+      inputOpts.push('-f', 'mp4')
+    } else if (tempFile) {
+      inputOpts.unshift('-protocol_whitelist', 'file,http,https,tcp,tls')
+      inputOpts.push('-allowed_extensions', 'ALL')
+    }
+
+    const cmd = ffmpeg()
+      .input(actualSrcUrl)
+      .inputOptions(inputOpts)
+
+    if (opts && opts.subtitlesAll && opts.subtitlesAll.length > 0) {
+      let inputIdx = 1
+      for (const sub of opts.subtitlesAll) {
+        if (!sub || !sub.url) continue
+        const subInputOpts = [
+          '-timeout', '10000000',
+          '-user_agent',
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        ]
+        if (opts && opts.referer) {
+          subInputOpts.unshift('-referer', opts.referer)
+        }
+        cmd.input(sub.url).inputOptions(subInputOpts)
+        baseOpts.push('-map', `${inputIdx}:0?`)
+        if (sub.language) {
+          baseOpts.push('-metadata:s:s:' + (inputIdx - 1), `language=${sub.language}`)
+        }
+        inputIdx++
+      }
+    } else if (opts && opts.subtitleUrl) {
+      const subInputOpts = [
+        '-timeout', '10000000',
+        '-user_agent',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+      ]
+      if (opts && opts.referer) {
+        subInputOpts.unshift('-referer', opts.referer)
+      }
+      cmd.input(opts.subtitleUrl).inputOptions(subInputOpts)
+      baseOpts.push('-map', '1:0?')
+      if (opts.subtitleLanguage) {
+        baseOpts.push('-metadata:s:s:0', `language=${opts.subtitleLanguage}`)
+      }
+    }
 
     if (local_settings.custom_ffmpeg_params) {
       const extra = local_settings.custom_ffmpeg_params.trim().split(/\s+/).filter(Boolean)
       baseOpts.push(...extra)
     }
 
-    const inputOpts = [
-      '-timeout',
-      '10000000',
-      '-user_agent',
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-    ]
-
-    if (opts && opts.referer) {
-      inputOpts.unshift('-referer', opts.referer)
-    }
-
-    const cmd = ffmpeg()
-      .input(srcUrl)
-      .inputOptions(inputOpts)
-      .outputOptions(baseOpts)
+    cmd.outputOptions(baseOpts)
       .output(outPath)
 
     cmd.on('progress', (info) => {
@@ -123,8 +177,14 @@ function runFfmpegDownload(
         onCmd(cmd)
       } catch {}
     }
-    cmd.on('end', () => resolve())
-    cmd.on('error', (err) => reject(err))
+    cmd.on('end', () => {
+      cleanupTempFile(tempFile)
+      resolve()
+    })
+    cmd.on('error', (err) => {
+      cleanupTempFile(tempFile)
+      reject(err)
+    })
     cmd.run()
   })
 }
@@ -380,10 +440,14 @@ async function startJob(job) {
     quality,
     localid,
     referer,
-    fromTelegram
+    fromTelegram,
+    subtitle_url,
+    subtitle_language,
+    subtitles_all,
+    proxy_method
   } = job
 
-  if (!video_src || typeof video_src !== 'string' || !video_src.startsWith('http')) {
+  if (!video_src || typeof video_src !== 'string') {
     logger.error(`Invalid video source for: ${url}`)
     return
   }
@@ -488,7 +552,14 @@ async function startJob(job) {
         }
       },
       durationSec,
-      { mapAudio: true, referer },
+      {
+        mapAudio: true,
+        referer,
+        subtitleUrl: subtitle_url || '',
+        subtitleLanguage: subtitle_language || '',
+        subtitlesAll: subtitles_all || [],
+        proxy_method: proxy_method || false
+      },
       (cmd) => {
         if (activeJobs[tempid]) activeJobs[tempid].cmd = cmd
       }
@@ -607,7 +678,14 @@ function createWindow() {
       'https://*.bunkr.site/*',
       'https://*.bunkr.si/*',
       'https://*.scdn.st/*',
-      'https://*.pimpbunny.com/*'
+      'https://*.pimpbunny.com/*',
+      'https://*.hvidserv.com/*',
+      'https://*.hentaila.com/*',
+      'https://*.hentaihaven.com/*',
+      'https://*.octopusmanifest.org/*',
+      'https://*.hentaihaven.xxx/*',
+      'https://*.anpustream.com/*',
+      'https://*.erome.com/*'
     ]
   }
 
@@ -639,6 +717,19 @@ function createWindow() {
       } else if (url.includes('sxyprn.com')) {
         details.requestHeaders['Referer'] = 'https://sxyprn.com/'
         details.requestHeaders['Range'] = 'bytes=0-'
+      } else if (url.includes('octopusmanifest.org')) {
+        details.requestHeaders['Referer'] = ''
+        details.requestHeaders['origin'] = 'https://hentaihaven.com'
+      } else if (url.includes('hvidserv.com')) {
+        details.requestHeaders['Referer'] = 'https://cdn.hvidserv.com'
+              details.requestHeaders['Range'] = 'bytes=0-'
+        details.requestHeaders['origin'] = ''
+      } else if (url.includes('hentaihaven.com') || url.includes('hentaihaven.xxx')) {
+          details.requestHeaders['Referer'] = !url.includes('hentaihaven.xxx') ? 'https://hentaihaven.com' : 'https://hentaihaven.xxx'
+
+      } else if (url.includes('anpustream.com')) {
+        details.requestHeaders['Referer'] = ''
+        details.requestHeaders['Range'] = 'bytes=0-'
       } else if (
         url.includes('bunkr.cr') ||
         url.includes('bunkr.site') ||
@@ -653,9 +744,28 @@ function createWindow() {
         details.requestHeaders['Origin'] = siteDetect
       } else if (url.includes('scdn.st')) {
         details.requestHeaders['Referer'] = 'https://bunkr.cr/'
+      } else if (url.includes('erome.com')) {
+        details.requestHeaders['Referer'] = 'https://www.erome.com/'
       }
 
       callback({ requestHeaders: details.requestHeaders })
+    } else {
+      callback({ cancel: false })
+    }
+  })
+
+  session.defaultSession.webRequest.onHeadersReceived(filter, (details, callback) => {
+    if (details && details.responseHeaders) {
+      delete details.responseHeaders['access-control-allow-origin']
+      delete details.responseHeaders['Access-Control-Allow-Origin']
+      delete details.responseHeaders['access-control-allow-methods']
+      delete details.responseHeaders['Access-Control-Allow-Methods']
+      delete details.responseHeaders['access-control-allow-headers']
+      delete details.responseHeaders['Access-Control-Allow-Headers']
+      details.responseHeaders['Access-Control-Allow-Origin'] = ['*']
+      details.responseHeaders['Access-Control-Allow-Methods'] = ['GET, POST, OPTIONS']
+      details.responseHeaders['Access-Control-Allow-Headers'] = ['*']
+      callback({ responseHeaders: details.responseHeaders })
     } else {
       callback({ cancel: false })
     }
@@ -696,25 +806,32 @@ function createWindow() {
   })
 
   let localpos = { x: 0, y: 0 }
-  ipcMain.on('setState', (e, v) => {
-    v == 'min' && !mainWindow.isMinimized() && mainWindow.minimize()
 
-    if (v == 'max' && !max) {
-      localpos.x = mainWindow.getBounds().x
-      localpos.y = mainWindow.getBounds().y
-      mainWindow.maximize()
-      mainWindow.focus()
-      max = true
-    } else if (v == 'max' && max) {
-      max = false
-      mainWindow.setBounds({
-        x: localpos.x,
-        y: localpos.y,
-        width: BoundsWin.width,
-        height: BoundsWin.height
-      })
+  mainWindow.on('maximize', () => {
+    max = true
+  })
+
+  mainWindow.on('unmaximize', () => {
+    max = false
+  })
+
+  ipcMain.on('setState', (e, v) => {
+    if (v == 'min') {
+      if (!mainWindow.isMinimized()) {
+        mainWindow.minimize()
+      }
+    } else if (v == 'max') {
+      if (mainWindow.isMaximized()) {
+        mainWindow.unmaximize()
+      } else {
+        localpos.x = mainWindow.getBounds().x
+        localpos.y = mainWindow.getBounds().y
+        mainWindow.maximize()
+        mainWindow.focus()
+      }
+    } else if (v == 'close') {
+      app.quit()
     }
-    v == 'close' && app.quit()
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
@@ -787,6 +904,7 @@ app.whenReady().then(async () => {
         video_test: videoData.video_test || [],
         thumb: videoData.thumb || '',
         list_quality: videoData.list_quality || [],
+        subtitles: videoData.subtitles || [],
         time: videoData.time || '0:0:0',
         embed: videoData.embed || '',
         status: videoData.status || 404,
@@ -917,6 +1035,38 @@ app.whenReady().then(async () => {
     }
   })
 
+  ipcMain.handle('list-remote-extensions', async (e, branch) => {
+    try {
+      return await extensionRegistry.listRemoteExtensions(branch || 'main')
+    } catch (error) {
+      logger.error('Error listing remote extensions:', error)
+      return []
+    }
+  })
+
+  ipcMain.handle('list-local-extensions', async () => {
+    try {
+      const extensionsDir = is.dev
+        ? path.join(process.cwd(), 'extensions')
+        : path.join(documentsPath, 'horny-downloader', 'extensions')
+      const files = readdirSync(extensionsDir)
+        .filter(f => f.endsWith('Extension.js') && f !== 'Extension.js' && f !== 'index.js')
+      return files.map(f => f.replace('Extension.js', '').toLowerCase())
+    } catch (error) {
+      logger.error('Error listing local extensions:', error)
+      return []
+    }
+  })
+
+  ipcMain.handle('install-extension', async (e, { name, branch }) => {
+    try {
+      return await extensionRegistry.installExtension(name, branch || 'main')
+    } catch (error) {
+      logger.error(`Error installing extension ${name}:`, error)
+      return false
+    }
+  })
+
   ipcMain.handle('pick-batch-file', async (e) => {
     const { filePaths } = await dialog.showOpenDialog({
       properties: ['openFile'],
@@ -956,6 +1106,8 @@ app.whenReady().then(async () => {
       quality: v.quality || '',
       duration: v.time || '0:0:0',
       referer: v.referer || '',
+      subtitle_url: v.subtitle_url || '',
+      subtitle_language: v.subtitle_language || '',
       tempid: randomUUID(),
       localid: 0,
       status: 'pending',
@@ -1045,6 +1197,7 @@ app.whenReady().then(async () => {
         const videoData = await registry.extractVideo(url)
         if (videoData.is_batch && videoData.batch_urls && videoData.batch_urls.length > 0) {
           logger.debug(`Skipping album URL in batch: ${url}`)
+          index++
           continue
         }
 
@@ -1086,6 +1239,8 @@ app.whenReady().then(async () => {
             decodeURIComponent(escape(videoData.title.replace(/[^a-zA-Z0-9 ]/g, ''))) ||
             'Unknown Title'
 
+          index++
+
           const job = {
             title: title,
             thumb: videoData.thumb || '',
@@ -1102,18 +1257,19 @@ app.whenReady().then(async () => {
           await enqueueDownload(job)
         } else {
           logger.warn(`No valid video source for URL: ${url}`)
+          index++
           if (mainWindow) {
             mainWindow.webContents.send('batch-progress', {
               total: urls.length,
-              processed: index + 1,
-              remaining: urls.length - index - 1,
+              processed: index,
+              remaining: urls.length - index,
               failed: url
             })
           }
         }
-        index++
       } catch (err) {
         logger.error(`Failed to process batch url ${url}:`, err)
+        index++
       }
     }
   }
@@ -1133,7 +1289,7 @@ app.whenReady().then(async () => {
   })
 
   ipcMain.on('getCheck', async (e, v) => {
-    const { title, format, thumb, site, url, video_src, tempid, duration, quality, referer } = v
+    const { title, format, thumb, site, url, video_src, tempid, duration, quality, referer, subtitle_url, subtitle_language, subtitles_all, proxy_method } = v
 
     if (title && format && site && url && video_src) {
       await enqueueDownload({
@@ -1146,7 +1302,11 @@ app.whenReady().then(async () => {
         tempid,
         duration,
         quality,
-        referer
+        referer,
+        subtitle_url: subtitle_url || '',
+        subtitle_language: subtitle_language || '',
+        subtitles_all: subtitles_all || [],
+        proxy_method: proxy_method || false
       })
     }
   })
@@ -1176,11 +1336,13 @@ app.whenReady().then(async () => {
         video_test: videoData.video_test || [],
         thumb: videoData.thumb || '',
         list_quality: videoData.list_quality || [],
+        subtitles: videoData.subtitles || [],
         time: videoData.time || '0:0:0',
         embed: videoData.embed || '',
         status: videoData.status || 404,
         force_type: videoData.force_type,
-        referer: videoData.referer
+        referer: videoData.referer,
+        proxy_method: videoData.proxy_method || false
       }
       e.reply('getVideo', videoObject)
     } catch (error) {
@@ -1197,6 +1359,7 @@ app.whenReady().then(async () => {
 })
 
 app.on('window-all-closed', () => {
+  destroyProxyWindow()
   if (process.platform !== 'darwin') {
     app.quit()
   }

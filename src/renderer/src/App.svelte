@@ -58,6 +58,8 @@
   let sites = $state([])
   let availableUpdates = $state([])
   let isCheckingUpdates = $state(false)
+  let remoteExtensions = $state([])
+  let isInstalling = $state(false)
 
   // --- Video & Download State ---
   let url = $state('')
@@ -77,6 +79,10 @@
   let url_video = $state('')
   let window_video = $state(false)
   let telegram_download = $state(false)
+  let subtitle_list = $state([])
+  let selected_subtitle = $state('')
+  let proxy_method_video = $state(false)
+  let fetching_video = $state(false)
 
   // --- UI State ---
   let searchQuery = $state('')
@@ -377,6 +383,7 @@
 
   const handleGetVideo = (e, v) => {
     getdata = true
+    fetching_video = false
 
     if (v.error) {
       notifications.error('Failed to get video data', { duration: 2000 })
@@ -488,8 +495,9 @@
 
   function siteColor(site) {
     if (siteColorCache.has(site)) return siteColorCache.get(site)
-    const color =
+    let color =
       sites.find((it) => it.value.toLowerCase() === site.toLowerCase())?.color || '#242424b0'
+    if (color.length === 9) color = color.slice(0, 7)
     siteColorCache.set(site, color)
     return color
   }
@@ -504,15 +512,27 @@
       url_video = v.url
       embed = v.embed
       referer = v.referer
+      proxy_method_video = v.proxy_method || false
       quality_list =
         v.list_quality && v.list_quality.length > 0
           ? v.list_quality.sort((a, b) => b.quality - a.quality)
           : [{ url: '', quality: 'original', size: '' }]
       selected_quality = quality_list[0]?.url || ''
+      subtitle_list = v.subtitles || []
+      selected_subtitle = ''
 
       setTimeout(() => {
         getdata = false
       }, 1500)
+    }
+  }
+
+  function handleDuration(seconds) {
+    if (seconds > 0 && (!time_video || time_video === '0:0:0' || time_video === '')) {
+      const h = Math.floor(seconds / 3600)
+      const m = Math.floor((seconds % 3600) / 60)
+      const s = Math.floor(seconds % 60)
+      time_video = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
     }
   }
 
@@ -599,6 +619,7 @@
             value: ext.config.name,
             label: ext.config.name,
             color: ext.config.color,
+            proxy_method: ext.config.proxy_method || false,
             requiresExtension: true
           })
         }
@@ -678,6 +699,23 @@
     }
   }
 
+  async function updateAllExtensions() {
+    const updates = [...availableUpdates]
+    if (updates.length === 0) return
+    notifications.info(`Updating ${updates.length} extensions...`, { duration: 2000 })
+    for (const ext of updates) {
+      try {
+        await window.electron.ipcRenderer.invoke('update-extension', {
+          name: ext.name,
+          branch: settings.extension_branch || 'main'
+        })
+        availableUpdates = availableUpdates.filter((u) => u.name !== ext.name)
+      } catch {}
+    }
+    notifications.success(`All extensions updated`, { duration: 2000 })
+    await reloadExtensions()
+  }
+
   async function syncExtensions() {
     try {
       const result = await window.electron.ipcRenderer.invoke('copy-extensions-to-documents')
@@ -695,6 +733,44 @@
     }
   }
 
+  async function fetchRemoteExtensions() {
+    try {
+      const allRemote = await window.electron.ipcRenderer.invoke(
+        'list-remote-extensions',
+        settings.extension_branch || 'main'
+      )
+
+      const localFiles = await window.electron.ipcRenderer.invoke('list-local-extensions')
+      const localNames = new Set(localFiles)
+
+      remoteExtensions = allRemote.filter(r => !localNames.has(r.name))
+    } catch (error) {
+      console.error('Error fetching remote extensions:', error)
+    }
+  }
+
+  async function installExtension(ext) {
+    isInstalling = true
+    try {
+      notifications.info(`Installing ${ext.displayName}...`, { duration: 2000 })
+      const success = await window.electron.ipcRenderer.invoke('install-extension', {
+        name: ext.name,
+        branch: settings.extension_branch || 'main'
+      })
+      if (success) {
+        notifications.success(`Installed ${ext.displayName}`, { duration: 2000 })
+        remoteExtensions = remoteExtensions.filter((e) => e.name !== ext.name)
+        await reloadExtensions()
+      } else {
+        notifications.error(`Failed to install ${ext.displayName}`)
+      }
+    } catch (error) {
+      notifications.error(`Error installing ${ext.displayName}`)
+    } finally {
+      isInstalling = false
+    }
+  }
+
   // --- Download & Batch ---
 
   function getVideo() {
@@ -705,7 +781,11 @@
     title_video = ''
     embed = ''
     referer = ''
+    proxy_method_video = false
+    subtitle_list = []
+    selected_subtitle = ''
     getdata = true
+    fetching_video = true
     window.electron.ipcRenderer.send('getVideo', { url: url })
     notifications.info('Obtaining data', { duration: 2000 })
   }
@@ -736,6 +816,18 @@
       locallist = [newItem, ...locallist]
 
       window_close()
+      let subtitleUrl = ''
+      let subtitleLanguage = ''
+      let subtitlesAll = []
+      if (selected_subtitle === 'all') {
+        subtitlesAll = subtitle_list
+      } else if (selected_subtitle) {
+        const subItem = subtitle_list.find((s) => s.url === selected_subtitle)
+        if (subItem) {
+          subtitleUrl = subItem.url
+          subtitleLanguage = subItem.language
+        }
+      }
       window.electron.ipcRenderer.send('getCheck', {
         title: title_video,
         thumb: thumb_video,
@@ -751,7 +843,11 @@
         tempid: tempid,
         duration: time_video,
         referer: referer,
-        quality: qualityItem ? qualityItem.quality : 'original'
+        quality: qualityItem ? qualityItem.quality : 'original',
+        subtitle_url: subtitleUrl,
+        subtitle_language: subtitleLanguage,
+        subtitles_all: subtitlesAll,
+        proxy_method: proxy_method_video
       })
       url = ''
       window.document.querySelector('.scroll').scrollTo({ top: 0 })
@@ -945,7 +1041,7 @@
 {/if}
 
 {#if batchModalOpen}
-  <div class="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+  <div class="fixed inset-0 bg-black/70 flex items-center justify-center z-99999 p-4">
     <div class="bg-[#252525] rounded-lg shadow-xl max-w-sm w-full p-6 border border-[#3d3d3d]">
       <h3 class="text-lg font-semibold text-white mb-1">Batch Import</h3>
       <p class="text-gray-400 text-sm mb-4">Found {batchUrls.length} links to process.</p>
@@ -1036,6 +1132,14 @@
             <span>Update Available</span>
           </button>
         {/if}
+        {#if availableUpdates.length > 0}
+          <button
+            onclick={updateAllExtensions}
+            class="ml-1.5 px-2 py-0.5 no_move text-xs font-medium rounded-full bg-orange-600 text-white flex items-center gap-1.5 hover:bg-orange-700 transition-colors"
+          >
+            <span>Update all extensions ({availableUpdates.length})</span>
+          </button>
+        {/if}
       </div>
     </div>
   </div>
@@ -1087,8 +1191,9 @@
             value={site.value}
             class="bg-[#1B1B1B]"
             disabled={site.requiresExtension && !isExtensionLoaded(site.value)}
+            title={site.proxy_method ? 'Uses local proxy to bypass Cloudflare/CDN protection' : ''}
           >
-            {site.label}
+            {site.label}{site.proxy_method ? ' [PROXY]' : ''}
           </option>
         {/each}
       </select>
@@ -1730,6 +1835,7 @@
                       id="setting-branch"
                       class="w-full px-3.5 py-2 bg-[#252525] border border-[#3a3a3a] hover:border-[#4a4a4a] focus:border-[#FF9027] focus:ring-2 focus:ring-[#FF9027]/30 rounded-lg text-sm text-white transition-all duration-200 appearance-none cursor-pointer"
                       bind:value={settings.extension_branch}
+                      onchange={() => { checkForUpdates(); remoteExtensions = [] }}
                     >
                       <option value="main">Main (Stable)</option>
                       <option value="dev">Dev (Beta)</option>
@@ -1894,6 +2000,9 @@
                       <div>
                         <p class="text-sm font-medium text-white">
                           {name.replace('Extension', '')}
+                          {#if info.config?.proxy_method}
+                            <span class="inline-flex items-center px-1.5 py-0.5 ml-1 rounded text-[10px] font-semibold bg-amber-500/20 text-amber-400 border border-amber-500/30" title="Downloads segments via browser to bypass Cloudflare/CDN protection">PROXY</span>
+                          {/if}
                         </p>
                         <p class="text-xs text-gray-400">
                           Domains: {info.domains.join(', ')}
@@ -1926,6 +2035,49 @@
                 {#if Object.keys(extensions_status.loaded || {}).length === 0 && Object.keys(extensions_status.failed || {}).length === 0}
                   <div class="text-center py-8 text-gray-400">
                     <p class="text-sm">No extensions found</p>
+                  </div>
+                {/if}
+              </div>
+
+              <div class="w-full h-px bg-[#3a3a3a] my-4"></div>
+
+              <div class="space-y-4">
+                <div class="flex items-center justify-between">
+                  <h3 class="text-sm font-medium text-gray-300 uppercase tracking-wider">
+                    Install Extensions
+                  </h3>
+                  <button
+                    onclick={fetchRemoteExtensions}
+                    class="text-xs text-[#FF9027] hover:text-[#FF6B00] font-medium flex items-center gap-1.5 transition-colors px-2 py-1 rounded hover:bg-[#FF9027]/10"
+                  >
+                    <RefreshCw size={14} />
+                    Check Available
+                  </button>
+                </div>
+                {#if remoteExtensions.length > 0}
+                  <div class="space-y-3">
+                    {#each remoteExtensions as ext}
+                      <div class="flex items-center justify-between p-3 bg-[#252525] rounded-lg border border-[#3a3a3a]">
+                        <div class="flex items-center gap-3">
+                          <div class="w-2 h-2 bg-blue-500 rounded-full"></div>
+                          <div>
+                            <p class="text-sm font-medium text-white">{ext.displayName}</p>
+                            <p class="text-xs text-gray-400">Not installed</p>
+                          </div>
+                        </div>
+                        <button
+                          onclick={() => installExtension(ext)}
+                          disabled={isInstalling}
+                          class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-medium rounded transition-colors"
+                        >
+                          {isInstalling ? 'Installing...' : 'Install'}
+                        </button>
+                      </div>
+                    {/each}
+                  </div>
+                {:else if remoteExtensions.length === 0}
+                  <div class="text-center py-4 text-gray-400">
+                    <p class="text-sm">No more extensions found</p>
                   </div>
                 {/if}
               </div>
@@ -2377,6 +2529,17 @@
       {/if}
     </div>
   </div>
+  {#if fetching_video}
+    <div class="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div class="bg-[#1e1e1e] border border-[#3a3a3a] rounded-xl p-8 flex flex-col items-center gap-4 shadow-2xl">
+        <svg class="animate-spin h-10 w-10 text-[#FF9027]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+        </svg>
+        <span class="text-white text-sm font-medium">Loading video data...</span>
+      </div>
+    </div>
+  {/if}
   {#if window_video}
     <div
       class="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4"
@@ -2408,6 +2571,8 @@
                   src={video_test}
                   poster={thumb_video}
                   title={title_video}
+                  onDuration={handleDuration}
+                  subtitles={subtitle_list}
                 />
               {:else}
                 <div class="w-full h-full flex items-center justify-center bg-black">
@@ -2416,7 +2581,14 @@
               {/if}
             </div>
             <div class="mt-4">
-              <h3 class="text-white font-medium text-lg truncate">{title_video}</h3>
+              <div class="flex items-center gap-2">
+                <h3 class="text-white font-medium text-lg truncate">{title_video}</h3>
+                {#if proxy_method_video}
+                  <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-amber-500/20 text-amber-400 border border-amber-500/30 shrink-0" title="Downloads segments via browser to bypass Cloudflare/CDN protection">
+                    PROXY
+                  </span>
+                {/if}
+              </div>
               <p class="text-gray-400 text-sm mt-1">Video Duration: {format_time(time_video)}</p>
             </div>
           </div>
@@ -2489,6 +2661,41 @@
                   </div>
                 </div>
               </div>
+
+              {#if subtitle_list.length > 0}
+                <div class="space-y-2">
+                  <span class="block text-sm font-medium text-gray-300 mb-1">Subtitle</span>
+                  <div class="relative">
+                    <select
+                      class="w-full bg-[#2d2d2d] border border-[#3a3a3a] text-white text-sm rounded-lg focus:border-[#FF9027] block p-2.5 appearance-none cursor-pointer pr-8"
+                      bind:value={selected_subtitle}
+                    >
+                      <option value="" class="bg-[#2d2d2d] text-white">None</option>
+                      <option value="all" class="bg-[#2d2d2d] text-white">All</option>
+                      {#each subtitle_list as sub}
+                        <option value={sub.url} class="bg-[#2d2d2d] text-white">
+                          {sub.name} ({sub.language})
+                        </option>
+                      {/each}
+                    </select>
+                    <div class="absolute inset-y-0 right-3 flex items-center pointer-events-none">
+                      <svg
+                        class="w-4 h-4 text-gray-400"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          stroke-width="2"
+                          d="M19 9l-7 7-7-7"
+                        />
+                      </svg>
+                    </div>
+                  </div>
+                </div>
+              {/if}
 
               <button
                 class="w-full py-3 px-4 rounded-lg font-medium text-white transition-all duration-200 flex items-center justify-center gap-2 {getdata

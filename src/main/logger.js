@@ -1,9 +1,14 @@
-import { app } from 'electron'
 import fs from 'fs'
 import path from 'path'
 import {format} from 'date-and-time'
 
-const logsDir = path.join(app.getPath('documents'), 'horny-downloader', 'logs')
+let logsDir
+try {
+  const { app } = await import('electron')
+  logsDir = path.join(app.getPath('documents'), 'horny-downloader', 'logs')
+} catch {
+  logsDir = path.join(process.env.USERPROFILE || process.env.HOME || process.cwd(), 'horny-downloader', 'logs')
+}
 
 function ensureLogsDir() {
   if (!fs.existsSync(logsDir)) {
