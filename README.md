@@ -120,7 +120,6 @@ export default class NewSiteExtension {
 - Hentaihaven
 - Hentaila
 
-
 ## 🛠️ Installation for dev
 
 ### Prerequisites
