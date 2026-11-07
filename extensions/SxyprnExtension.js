@@ -11,7 +11,10 @@ export default class SxyprnExtension {
       format_support: ['mp4'],
       vtt_support: false,
       quality_support: ['original'],
-      version: '1.1.2'
+      patterns: ['https://*.sxyprn.com/*'],
+      referer_url: 'https://sxyprn.com/',
+      referer_extra: [{ name: 'Range', value: 'bytes=0-' }],
+      version: '1.2.0'
     }
     this.extension = new ExtensionExtra(this.config)
   }

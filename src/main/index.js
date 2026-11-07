@@ -11,6 +11,8 @@ import {
 } from 'electron'
 import path from 'path'
 import ExtensionRegistry from '../../lib/ExtensionRegistry.js'
+import { clearExtensionLogs, getExtensionLogs } from '../../lib/extensionLogger.js'
+import RequestInterceptor from '../../lib/requestInterceptor.js'
 import { is, optimizer } from '@electron-toolkit/utils'
 import sqlite3 from 'sqlite3'
 import {
@@ -28,7 +30,13 @@ import { setupAutoUpdater } from './autoUpdater.js'
 import { randomUUID } from 'crypto'
 import logger from './logger.js'
 import { init } from './telegramBot.js'
-import { destroyProxyWindow, downloadHlsToMp4, cleanupTempFile } from '../../lib/proxyDownloader.js'
+import {
+  destroyProxyWindow,
+  downloadHlsToMp4,
+  downloadFileToMp4,
+  proxyFetch,
+  cleanupTempFile
+} from '../../lib/proxyDownloader.js'
 
 const documentsPath = app.getPath('documents')
 const url = require('node:url')
@@ -40,6 +48,7 @@ const sql = sqlite3.verbose()
 const db = new sql.Database(path.join(documentsPath, 'horny-downloader', 'data.db'))
 
 const extensionRegistry = new ExtensionRegistry()
+let requestInterceptor = null
 import ffmpeg from 'fluent-ffmpeg'
 
 let ffmpegPath = ''
@@ -87,7 +96,19 @@ function runFfmpegDownload(
     let tempFile = null
     let actualSrcUrl = srcUrl
 
-    if (opts?.proxy_method && srcUrl && (srcUrl.includes('.m3u8') || srcUrl.includes('/m3u8/'))) {
+    const isHls = srcUrl && (srcUrl.includes('.m3u8') || srcUrl.includes('/m3u8/'))
+
+    if (opts?.proxy_method && !isHls && srcUrl) {
+      // Direct media file on a host that only accepts browser TLS fingerprints
+      try {
+        tempFile = await downloadFileToMp4(srcUrl, documentsPath, onProgress, {
+          headers: opts.referer ? { Referer: opts.referer } : {}
+        })
+        actualSrcUrl = tempFile.split(path.sep).join('/')
+      } catch (err) {
+        logger.error('Proxy download failed, falling back to direct:', err.message)
+      }
+    } else if (opts?.proxy_method && isHls && srcUrl) {
       try {
         tempFile = await downloadHlsToMp4(srcUrl, documentsPath, onProgress)
         actualSrcUrl = tempFile.split(path.sep).join('/')
@@ -104,7 +125,12 @@ function runFfmpegDownload(
     const inputOpts = []
 
     if (actualSrcUrl.startsWith('http')) {
-      inputOpts.push('-timeout', '10000000', '-user_agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36')
+      inputOpts.push(
+        '-timeout',
+        '10000000',
+        '-user_agent',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+      )
       if (opts && opts.referer) {
         inputOpts.unshift('-referer', opts.referer)
       }
@@ -117,16 +143,15 @@ function runFfmpegDownload(
       inputOpts.push('-allowed_extensions', 'ALL')
     }
 
-    const cmd = ffmpeg()
-      .input(actualSrcUrl)
-      .inputOptions(inputOpts)
+    const cmd = ffmpeg().input(actualSrcUrl).inputOptions(inputOpts)
 
     if (opts && opts.subtitlesAll && opts.subtitlesAll.length > 0) {
       let inputIdx = 1
       for (const sub of opts.subtitlesAll) {
         if (!sub || !sub.url) continue
         const subInputOpts = [
-          '-timeout', '10000000',
+          '-timeout',
+          '10000000',
           '-user_agent',
           'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         ]
@@ -142,7 +167,8 @@ function runFfmpegDownload(
       }
     } else if (opts && opts.subtitleUrl) {
       const subInputOpts = [
-        '-timeout', '10000000',
+        '-timeout',
+        '10000000',
         '-user_agent',
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
       ]
@@ -161,8 +187,7 @@ function runFfmpegDownload(
       baseOpts.push(...extra)
     }
 
-    cmd.outputOptions(baseOpts)
-      .output(outPath)
+    cmd.outputOptions(baseOpts).output(outPath)
 
     cmd.on('progress', (info) => {
       if (onProgress && durationSec && durationSec > 0 && info && info.timemark) {
@@ -202,6 +227,68 @@ const downloadQueue = []
 let activeDownloads = 0
 let mainWindow = null
 let telegramBotInstance = null
+
+// FFmpeg can emit progress many times per second. Coalesce renderer updates so the
+// UI stays smooth without flooding the IPC channel (and the reactive store) with events.
+const PROGRESS_INTERVAL_MS = 120
+const downloadProgressState = new Map()
+
+function sendDownloadProgress(payload, { immediate = false } = {}) {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+
+  const key = String(payload.id ?? '')
+  const now = Date.now()
+  const state = downloadProgressState.get(key) || { last: 0, timer: null, pending: null }
+
+  if (immediate) {
+    if (state.timer) clearTimeout(state.timer)
+    state.timer = null
+    state.pending = null
+    state.last = now
+    mainWindow.webContents.send('getProgress', payload)
+    if (payload.load >= 100) downloadProgressState.delete(key)
+    else downloadProgressState.set(key, state)
+    return
+  }
+
+  state.pending = payload
+  const elapsed = now - state.last
+
+  if (elapsed >= PROGRESS_INTERVAL_MS) {
+    if (state.timer) {
+      clearTimeout(state.timer)
+      state.timer = null
+    }
+    state.pending = null
+    state.last = now
+    downloadProgressState.set(key, state)
+    mainWindow.webContents.send('getProgress', payload)
+    return
+  }
+
+  if (!state.timer) {
+    state.timer = setTimeout(() => {
+      state.timer = null
+      const next = state.pending
+      state.pending = null
+      if (!next) return
+      if (!mainWindow || mainWindow.isDestroyed()) return
+      state.last = Date.now()
+      mainWindow.webContents.send('getProgress', next)
+    }, PROGRESS_INTERVAL_MS - elapsed)
+  }
+
+  downloadProgressState.set(key, state)
+}
+
+function extensionErrorPayload(error, url = '') {
+  return {
+    error: error?.message || 'The extension could not extract this video',
+    error_code: error?.code || 'EXTENSION_ERROR',
+    error_extension: error?.extension || '',
+    error_url: error?.url || url
+  }
+}
 
 async function enqueueDownload(job) {
   logger.info('Enqueueing download', { title: job.title, site: job.site, url: job.url })
@@ -336,6 +423,14 @@ ipcMain.on('openExtensionsFolder', (e) => {
     shell.openPath(extPath)
   } catch (err) {
     logger.error('openExtensionsFolder error:', err)
+  }
+})
+
+ipcMain.on('openExtensionLogs', (e) => {
+  try {
+    shell.openPath(logger.getLogsPath())
+  } catch (err) {
+    logger.error('openExtensionLogs error:', err)
   }
 })
 
@@ -544,12 +639,10 @@ async function startJob(job) {
       video_src,
       outPath,
       (pct) => {
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('getProgress', {
-            id: localid || tempid,
-            load: pct
-          })
-        }
+        sendDownloadProgress({
+          id: localid || tempid,
+          load: pct
+        })
       },
       durationSec,
       {
@@ -565,12 +658,7 @@ async function startJob(job) {
       }
     )
     if (localid !== null) {
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('getProgress', {
-          id: localid,
-          load: 100
-        })
-      }
+      sendDownloadProgress({ id: localid, load: 100 }, { immediate: true })
 
       const stats = statSync(outPath)
       const fileSizeInBytes = stats.size
@@ -664,112 +752,10 @@ function createWindow() {
 
   const BoundsWin = mainWindow.getBounds()
 
-  const filter = {
-    urls: [
-      'https://*.phncdn.com/*',
-      'https://*.externulls.com/*',
-      'https://*.ahcdn.com/*',
-      'https://*.eporner.com/*',
-      'http://*.eporner.com/*',
-      'https://*.spankbang.com/*',
-      'https://*.pornone.com/*',
-      'https://*.sxyprn.com/*',
-      'https://*.bunkr.cr/*',
-      'https://*.bunkr.site/*',
-      'https://*.bunkr.si/*',
-      'https://*.scdn.st/*',
-      'https://*.pimpbunny.com/*',
-      'https://*.hvidserv.com/*',
-      'https://*.hentaila.com/*',
-      'https://*.hentaihaven.com/*',
-      'https://*.octopusmanifest.org/*',
-      'https://*.hentaihaven.xxx/*',
-      'https://*.anpustream.com/*',
-      'https://*.erome.com/*'
-    ]
+  if (!requestInterceptor) {
+    requestInterceptor = new RequestInterceptor(extensionRegistry, session.defaultSession)
   }
-
-  session.defaultSession.webRequest.onBeforeSendHeaders(filter, (details, callback) => {
-    if (details && details.requestHeaders) {
-      details.requestHeaders['Access-Control-Allow-Origin'] = '*'
-      details.requestHeaders['Origin'] = ''
-      details.requestHeaders['User-Agent'] =
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36'
-
-      const { url } = details
-
-      if (url.includes('phncdn.com')) {
-        details.requestHeaders['Referer'] = 'https://www.pornhub.com/'
-      } else if (url.includes('externulls.com') || url.includes('ahcdn.com')) {
-        details.requestHeaders['Referer'] = 'https://beeg.com/'
-      } else if (
-        url.includes('eporner.com') ||
-        (url.includes('dash-s') && url.includes('eporner'))
-      ) {
-        details.requestHeaders['Origin'] = 'https://www.eporner.com'
-        details.requestHeaders['Referer'] = 'https://www.eporner.com/'
-      } else if (url.includes('spankbang.com')) {
-        details.requestHeaders['Referer'] = 'https://spankbang.com/'
-      } else if (url.includes('pornone.com')) {
-        details.requestHeaders['Referer'] = 'https://pornone.com/'
-      } else if (url.includes('pimpbunny.com')) {
-        details.requestHeaders['Referer'] = 'https://pimpbunny.com/'
-      } else if (url.includes('sxyprn.com')) {
-        details.requestHeaders['Referer'] = 'https://sxyprn.com/'
-        details.requestHeaders['Range'] = 'bytes=0-'
-      } else if (url.includes('octopusmanifest.org')) {
-        details.requestHeaders['Referer'] = ''
-        details.requestHeaders['origin'] = 'https://hentaihaven.com'
-      } else if (url.includes('hvidserv.com')) {
-        details.requestHeaders['Referer'] = 'https://cdn.hvidserv.com'
-              details.requestHeaders['Range'] = 'bytes=0-'
-        details.requestHeaders['origin'] = ''
-      } else if (url.includes('hentaihaven.com') || url.includes('hentaihaven.xxx')) {
-          details.requestHeaders['Referer'] = !url.includes('hentaihaven.xxx') ? 'https://hentaihaven.com' : 'https://hentaihaven.xxx'
-
-      } else if (url.includes('anpustream.com')) {
-        details.requestHeaders['Referer'] = ''
-        details.requestHeaders['Range'] = 'bytes=0-'
-      } else if (
-        url.includes('bunkr.cr') ||
-        url.includes('bunkr.site') ||
-        url.includes('bunkr.si')
-      ) {
-        let siteDetect = url.includes('bunkr.site')
-          ? 'https://bunkr.site/'
-          : url.includes('bunkr.si')
-            ? 'https://bunkr.si/'
-            : 'https://bunkr.cr/'
-        details.requestHeaders['Referer'] = siteDetect
-        details.requestHeaders['Origin'] = siteDetect
-      } else if (url.includes('scdn.st')) {
-        details.requestHeaders['Referer'] = 'https://bunkr.cr/'
-      } else if (url.includes('erome.com')) {
-        details.requestHeaders['Referer'] = 'https://www.erome.com/'
-      }
-
-      callback({ requestHeaders: details.requestHeaders })
-    } else {
-      callback({ cancel: false })
-    }
-  })
-
-  session.defaultSession.webRequest.onHeadersReceived(filter, (details, callback) => {
-    if (details && details.responseHeaders) {
-      delete details.responseHeaders['access-control-allow-origin']
-      delete details.responseHeaders['Access-Control-Allow-Origin']
-      delete details.responseHeaders['access-control-allow-methods']
-      delete details.responseHeaders['Access-Control-Allow-Methods']
-      delete details.responseHeaders['access-control-allow-headers']
-      delete details.responseHeaders['Access-Control-Allow-Headers']
-      details.responseHeaders['Access-Control-Allow-Origin'] = ['*']
-      details.responseHeaders['Access-Control-Allow-Methods'] = ['GET, POST, OPTIONS']
-      details.responseHeaders['Access-Control-Allow-Headers'] = ['*']
-      callback({ responseHeaders: details.responseHeaders })
-    } else {
-      callback({ cancel: false })
-    }
-  })
+  requestInterceptor.attach()
 
   if (!existsSync(path.join(documentsPath, 'horny-downloader', 'temp'))) {
     mkdirSync(path.join(documentsPath, 'horny-downloader', 'temp'))
@@ -883,7 +869,7 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('extract-video-data', async (e, url) => {
     try {
-      const registry = new ExtensionRegistry()
+      const registry = extensionRegistry
       const videoData = await registry.extractVideo(url)
 
       if (videoData.is_batch && videoData.batch_urls && videoData.batch_urls.length > 0) {
@@ -913,7 +899,7 @@ app.whenReady().then(async () => {
       }
     } catch (error) {
       logger.error('Error extracting video:', error)
-      return { error: error.message }
+      return { success: false, ...extensionErrorPayload(error, url) }
     }
   })
 
@@ -959,6 +945,20 @@ app.whenReady().then(async () => {
       logger.error('Error getting extensions status:', error)
       return { loaded: {}, failed: {}, total: 0 }
     }
+  })
+
+  ipcMain.handle('get-extension-logs', async (e, options = {}) => {
+    try {
+      return getExtensionLogs(options)
+    } catch (error) {
+      logger.error('Error reading extension logs:', error)
+      return []
+    }
+  })
+
+  ipcMain.handle('clear-extension-logs', async () => {
+    clearExtensionLogs()
+    return { success: true }
   })
 
   ipcMain.handle('is-dev', () => {
@@ -1049,9 +1049,10 @@ app.whenReady().then(async () => {
       const extensionsDir = is.dev
         ? path.join(process.cwd(), 'extensions')
         : path.join(documentsPath, 'horny-downloader', 'extensions')
-      const files = readdirSync(extensionsDir)
-        .filter(f => f.endsWith('Extension.js') && f !== 'Extension.js' && f !== 'index.js')
-      return files.map(f => f.replace('Extension.js', '').toLowerCase())
+      const files = readdirSync(extensionsDir).filter(
+        (f) => f.endsWith('Extension.js') && f !== 'Extension.js' && f !== 'index.js'
+      )
+      return files.map((f) => f.replace('Extension.js', '').toLowerCase())
     } catch (error) {
       logger.error('Error listing local extensions:', error)
       return []
@@ -1090,9 +1091,30 @@ app.whenReady().then(async () => {
     return { count: 0, urls: [] }
   })
 
-  ipcMain.handle('start-batch-download', async (e, { urls, quality, delay }) => {
-    processBatchUrls(urls, quality, delay)
+  ipcMain.handle('start-batch-download', async (e, options) => {
+    processBatchUrls(options)
     return { success: true }
+  })
+
+  ipcMain.handle('resolve-video-metadata', async (e, { url }) => {
+    try {
+      const registry = extensionRegistry
+      const videoData = await registry.extractVideo(url)
+      return normalizeVideoMetadata(url, videoData)
+    } catch (error) {
+      logger.error(`Error resolving metadata for ${url}:`, error)
+      return { success: false, url, ...extensionErrorPayload(error, url) }
+    }
+  })
+
+  // Fetch a text resource (e.g. .vtt subtitles) through Chromium's network
+  // stack so the renderer can load it as a blob URL. <track> elements fetch
+  // cross-origin vtt files in CORS mode and many CDNs do not send
+  // Access-Control-Allow-Origin, which logs "Unsafe attempt to load URL".
+  ipcMain.handle('fetch-proxy-text', async (e, url) => {
+    const resp = await proxyFetch(String(url))
+    if (!resp.ok) throw new Error(`Request failed with status ${resp.status}`)
+    return await resp.text()
   })
 
   ipcMain.on('addToDownload', async (e, v) => {
@@ -1168,59 +1190,171 @@ app.whenReady().then(async () => {
     return logger.getRecentLogs(500)
   })
 
-  async function processBatchUrls(urls, qualityPreference, delay) {
-    const registry = new ExtensionRegistry()
-    let index = 0
+  function cleanVideoTitle(value) {
+    if (!value) return ''
+    let title = String(value)
+    try {
+      title = decodeURIComponent(title)
+    } catch {}
+    return title
+      .replace(/[\u0000-\u001f<>:"/\\|?*]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+  }
 
-    if (mainWindow) {
-      mainWindow.webContents.send('batch-progress', {
-        total: urls.length,
-        processed: 0,
-        remaining: urls.length
+  function normalizeVideoMetadata(url, videoData) {
+    const listQuality = Array.isArray(videoData.list_quality) ? videoData.list_quality : []
+    const subtitles = Array.isArray(videoData.subtitles) ? videoData.subtitles : []
+
+    return {
+      success: true,
+      url,
+      is_batch: !!(videoData.is_batch && videoData.batch_urls && videoData.batch_urls.length > 0),
+      batch_urls: videoData.batch_urls || [],
+      title: cleanVideoTitle(videoData.title),
+      thumb: videoData.thumb || '',
+      site: videoData.site || 'unknown',
+      time: videoData.time || '',
+      embed: videoData.embed || '',
+      video_test: videoData.video_test || '',
+      list_quality: listQuality,
+      subtitles,
+      referer: videoData.referer || '',
+      force_type: videoData.force_type || '',
+      proxy_method: videoData.proxy_method || false
+    }
+  }
+
+  function pickBatchQuality(qualities, preference) {
+    const valid = (qualities || []).filter((q) => q && (q.url || q.src))
+    if (valid.length === 0) return null
+
+    const sorted = [...valid].sort(
+      (a, b) => (parseInt(b.quality, 10) || 0) - (parseInt(a.quality, 10) || 0)
+    )
+
+    if (preference === 'low') return sorted[sorted.length - 1]
+    if (preference === 'medium') return sorted[Math.floor(sorted.length / 2)]
+
+    const preferenceValue = String(preference || '')
+      .trim()
+      .toLowerCase()
+    const exactMatch = sorted.find(
+      (quality) => String(quality.quality || '').toLowerCase() === preferenceValue
+    )
+    if (exactMatch) return exactMatch
+
+    const target = parseInt(preference, 10)
+    if (!isNaN(target) && String(preference).trim() !== '') {
+      const match = sorted.find((q) => {
+        const value = parseInt(q.quality, 10)
+        return !isNaN(value) && value <= target
       })
+      return match || sorted[sorted.length - 1]
     }
 
-    for (const url of urls) {
+    return sorted[0]
+  }
+
+  function pickBatchSubtitles(subtitles, mode, language) {
+    const list = Array.isArray(subtitles) ? subtitles.filter((s) => s && s.url) : []
+    if (list.length === 0 || !mode || mode === 'none') return {}
+
+    if (mode === 'all') {
+      return { subtitles_all: list }
+    }
+
+    if (mode === 'language') {
+      const lang = String(language || '')
+        .toLowerCase()
+        .trim()
+      if (lang) {
+        const match = list.find((s) => {
+          return (
+            String(s.language || '')
+              .toLowerCase()
+              .includes(lang) ||
+            String(s.name || '')
+              .toLowerCase()
+              .includes(lang)
+          )
+        })
+        if (match) {
+          return { subtitle_url: match.url, subtitle_language: match.language || '' }
+        }
+      }
+    }
+
+    return { subtitle_url: list[0].url, subtitle_language: list[0].language || '' }
+  }
+
+  async function processBatchUrls(input, legacyQuality, legacyDelay) {
+    const options =
+      input && typeof input === 'object' && !Array.isArray(input)
+        ? input
+        : { urls: input, quality: legacyQuality, delay: legacyDelay }
+
+    const {
+      urls = [],
+      quality = 'max',
+      delay = 0,
+      format,
+      subtitleMode = 'none',
+      subtitleLanguage = '',
+      metadata = {}
+    } = options
+
+    const registry = extensionRegistry
+    const total = urls.length
+
+    const sendProgress = (payload) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('batch-progress', {
+          total,
+          processed: 0,
+          remaining: total,
+          ...payload
+        })
+      }
+    }
+
+    sendProgress({ processed: 0, remaining: total, status: 'started' })
+
+    for (let index = 0; index < total; index++) {
+      const url = urls[index]
+
       try {
         if (delay && delay > 0 && index > 0) {
           await new Promise((resolve) => setTimeout(resolve, delay))
         }
 
-        if (mainWindow) {
-          mainWindow.webContents.send('batch-progress', {
-            total: urls.length,
-            processed: index,
-            remaining: urls.length - index
-          })
-        }
+        sendProgress({
+          processed: index,
+          remaining: total - index,
+          status: 'processing',
+          currentUrl: url
+        })
 
         const videoData = await registry.extractVideo(url)
+
         if (videoData.is_batch && videoData.batch_urls && videoData.batch_urls.length > 0) {
           logger.debug(`Skipping album URL in batch: ${url}`)
-          index++
+          sendProgress({
+            processed: index + 1,
+            remaining: total - index - 1,
+            lastUrl: url,
+            lastStatus: 'album'
+          })
           continue
         }
 
+        const selectedQuality = pickBatchQuality(videoData.list_quality, quality)
         let bestQualitySrc = ''
         let bestQualityLabel = ''
 
-        if (videoData.list_quality && videoData.list_quality.length > 0) {
-          const validQualities = videoData.list_quality.filter((q) => q && (q.url || q.src))
-          if (validQualities.length > 0) {
-            const sorted = validQualities.sort((a, b) => parseInt(b.quality) - parseInt(a.quality))
-            let selected = sorted[0]
-
-            if (qualityPreference === 'low') {
-              selected = sorted[sorted.length - 1]
-            } else if (qualityPreference === 'medium') {
-              selected = sorted[Math.floor(sorted.length / 2)]
-            }
-
-            if (selected) {
-              bestQualitySrc = selected.url || selected.src
-              bestQualityLabel = selected.quality
-            }
-          }
+        if (selectedQuality) {
+          bestQualitySrc = selectedQuality.url || selectedQuality.src
+          bestQualityLabel = selectedQuality.quality || ''
         } else {
           bestQualitySrc = videoData.video_test
           bestQualityLabel = 'unknown'
@@ -1235,43 +1369,66 @@ app.whenReady().then(async () => {
         }
 
         if (bestQualitySrc && bestQualitySrc.startsWith('http')) {
+          const meta = metadata[url] || {}
           const title =
-            decodeURIComponent(escape(videoData.title.replace(/[^a-zA-Z0-9 ]/g, ''))) ||
-            'Unknown Title'
-
-          index++
+            cleanVideoTitle(meta.title) || cleanVideoTitle(videoData.title) || 'Unknown Title'
+          const subtitleFields = pickBatchSubtitles(
+            videoData.subtitles,
+            subtitleMode,
+            subtitleLanguage
+          )
 
           const job = {
-            title: title,
-            thumb: videoData.thumb || '',
-            site: videoData.site || 'unknown',
-            url: url,
-            format: local_settings.default_format || 'mkv',
+            title,
+            thumb: meta.thumb || videoData.thumb || '',
+            site: meta.site || videoData.site || 'unknown',
+            url,
+            format: format || local_settings.default_format || 'mkv',
             video_src: bestQualitySrc,
             tempid: randomUUID(),
-            duration: videoData.time || '00:00:00',
+            duration: meta.time || videoData.time || '00:00:00',
             quality: bestQualityLabel,
-            referer: videoData.referer
+            referer: videoData.referer || meta.referer || '',
+            proxy_method: videoData.proxy_method || false,
+            ...subtitleFields
           }
 
           await enqueueDownload(job)
+
+          sendProgress({
+            processed: index + 1,
+            remaining: total - index - 1,
+            lastUrl: url,
+            lastStatus: 'queued',
+            lastTitle: title
+          })
         } else {
           logger.warn(`No valid video source for URL: ${url}`)
-          index++
-          if (mainWindow) {
-            mainWindow.webContents.send('batch-progress', {
-              total: urls.length,
-              processed: index,
-              remaining: urls.length - index,
-              failed: url
-            })
-          }
+          sendProgress({
+            processed: index + 1,
+            remaining: total - index - 1,
+            lastUrl: url,
+            lastStatus: 'failed',
+            error: 'No video source found'
+          })
         }
       } catch (err) {
         logger.error(`Failed to process batch url ${url}:`, err)
-        index++
+        sendProgress({
+          processed: index + 1,
+          remaining: total - index - 1,
+          lastUrl: url,
+          lastStatus: 'failed',
+          error: err.message
+        })
       }
     }
+
+    sendProgress({
+      processed: total,
+      remaining: 0,
+      status: 'finished'
+    })
   }
 
   telegramBotInstance = init({
@@ -1280,7 +1437,7 @@ app.whenReady().then(async () => {
     mainWindow,
     logger,
     extractVideo: async (url) => {
-      const registry = new ExtensionRegistry()
+      const registry = extensionRegistry
       return await registry.extractVideo(url)
     },
     processBatchUrls: (urls, quality, delay) => {
@@ -1289,7 +1446,22 @@ app.whenReady().then(async () => {
   })
 
   ipcMain.on('getCheck', async (e, v) => {
-    const { title, format, thumb, site, url, video_src, tempid, duration, quality, referer, subtitle_url, subtitle_language, subtitles_all, proxy_method } = v
+    const {
+      title,
+      format,
+      thumb,
+      site,
+      url,
+      video_src,
+      tempid,
+      duration,
+      quality,
+      referer,
+      subtitle_url,
+      subtitle_language,
+      subtitles_all,
+      proxy_method
+    } = v
 
     if (title && format && site && url && video_src) {
       await enqueueDownload({
@@ -1313,7 +1485,7 @@ app.whenReady().then(async () => {
 
   ipcMain.on('getVideo', async (e, v) => {
     try {
-      const registry = new ExtensionRegistry()
+      const registry = extensionRegistry
 
       const videoData = await registry.extractVideo(v.url)
       console.log(videoData)
@@ -1330,9 +1502,7 @@ app.whenReady().then(async () => {
       const videoObject = {
         url: v.url,
         site: videoData.site || 'unknown',
-        title:
-          decodeURIComponent(escape(videoData.title.replace(/[^a-zA-Z0-9 ]/g, ''))) ||
-          'Unknown Title',
+        title: cleanVideoTitle(videoData.title) || 'Unknown Title',
         video_test: videoData.video_test || [],
         thumb: videoData.thumb || '',
         list_quality: videoData.list_quality || [],
@@ -1347,7 +1517,7 @@ app.whenReady().then(async () => {
       e.reply('getVideo', videoObject)
     } catch (error) {
       logger.error('Error extracting video:', error)
-      e.reply('getVideo', { error: error.message })
+      e.reply('getVideo', extensionErrorPayload(error, v.url))
     }
   })
 

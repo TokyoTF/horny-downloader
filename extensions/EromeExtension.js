@@ -12,7 +12,9 @@ export default class EromeExtension {
       format_support: ['mp4'],
       vtt_support: false,
       quality_support: ['720', '480'],
-      version: '1.0.0'
+      patterns: ['https://*.erome.com/*'],
+      referer_url: 'https://www.erome.com/',
+      version: '1.1.0'
     }
     this.extension = new ExtensionExtra(this.config)
   }

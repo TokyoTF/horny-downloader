@@ -8,11 +8,15 @@
   import UpdateNotification from './components/UpdateNotification.svelte'
   import { updateBanner, showUpdateBanner } from './components/store'
   import { notifications } from './components/NotificationStore'
+  import BatchImportModal from './components/BatchImportModal.svelte'
+  import SettingsModal from './components/SettingsModal.svelte'
+  import DownloadItem from './components/DownloadItem.svelte'
+  import DownloadOptionsModal from './components/DownloadOptionsModal.svelte'
+  import { parseCreatedAt, toSeconds, sameItem, format_time } from './lib/format'
+  import { createBatchItem } from './lib/batch'
 
   // --- Icons & Assets ---
   import {
-    ClipboardIcon,
-    FolderIcon,
     XIcon,
     MinusIcon,
     SquareIcon,
@@ -23,8 +27,7 @@
     List,
     ArrowDownWideNarrow,
     ArrowUpNarrowWide,
-    FileText,
-    RefreshCw
+    FileText
   } from 'lucide-svelte'
   import LogoIcon from './assets/logo.png'
 
@@ -103,12 +106,58 @@
 
   // --- Batch Import State ---
   let batchModalOpen = $state(false)
-  let batchUrls = $state([])
+  let batchItems = $state([])
+  let batchUrls = $derived(batchItems.map((item) => item.url))
   let batchQuality = $state('max')
+  let batchFormat = $state('mkv')
   let batchDelay = $state(12000)
   let batchSkipCount = $state(0)
-  let batchProgress = $state({ total: 0, processed: 0, remaining: 0 })
+  let batchSubtitleMode = $state('none')
+  let batchSubtitleLanguage = $state('')
+  let batchProgress = $state({
+    total: 0,
+    processed: 0,
+    remaining: 0,
+    status: '',
+    currentUrl: ''
+  })
+  let batchResolving = $state(false)
+  let batchPreview = $state(null)
+  let batchPreviewUrl = $state('')
+  let batchPreviewLoading = $state(false)
+  let batchResolveToken = 0
   let isDraggingOver = $state(false)
+
+  let batchResolvedCount = $derived(batchItems.filter((item) => item.resolved).length)
+  let batchFailedCount = $derived(batchItems.filter((item) => item.status === 'failed').length)
+  let batchPreviewItem = $derived(
+    batchItems.find((item) => item.url === batchPreviewUrl) || batchItems[0] || null
+  )
+  let batchPreviewTitle = $derived(
+    batchPreviewItem?.title || batchPreview?.title || 'No preview available'
+  )
+  let batchPreviewSource = $derived(
+    batchPreview?.video_test
+      ? batchPreview.force_type
+        ? { src: batchPreview.video_test, type: batchPreview.force_type }
+        : { src: batchPreview.video_test }
+      : ''
+  )
+  let batchSubtitleLanguages = $derived([
+    ...new Set(
+      (batchPreview?.subtitles || [])
+        .map((subtitle) => subtitle.language)
+        .filter((language) => !!language)
+    )
+  ])
+  let batchProcessCount = $derived(Math.max(0, batchUrls.length - (Number(batchSkipCount) || 0)))
+  let batchProgressLabel = $derived.by(() => {
+    if (!batchProgress.total) return ''
+    const currentItem = batchItems.find((item) => item.url === batchProgress.currentUrl)
+    const name = currentItem?.title || batchProgress.lastTitle || ''
+    const progress = `batch: ${batchProgress.processed}/${batchProgress.total}`
+    return name ? `${progress} · ${name}` : progress
+  })
 
   // --- Derived State ---
   let currentDownloading = $derived(
@@ -278,6 +327,23 @@
     window.electron.ipcRenderer.on('deletedItem', handleDeletedItem)
     window.electron.ipcRenderer.on('batch-progress', (e, data) => {
       batchProgress = data
+      if (data.currentUrl) {
+        const item = batchItems.find((entry) => entry.url === data.currentUrl)
+        if (item) item.status = 'processing'
+      }
+      if (data.lastUrl && data.lastStatus) {
+        const item = batchItems.find((entry) => entry.url === data.lastUrl)
+        if (item) {
+          item.status = data.lastStatus
+          if (data.lastTitle) item.title = data.lastTitle
+          if (data.error) item.error = data.error
+        }
+      }
+      if (data.status === 'finished') {
+        notifications.success(`Batch finished: ${data.processed} links processed`, {
+          duration: 3000
+        })
+      }
     })
     window.electron.ipcRenderer.on('telegram-url-received', (e, url) => {
       if (url && !telegram_download) {
@@ -317,6 +383,7 @@
     window.electron.ipcRenderer.removeAllListeners('getProgress')
     window.electron.ipcRenderer.removeAllListeners('getVideo')
     window.electron.ipcRenderer.removeAllListeners('deletedItem')
+    window.electron.ipcRenderer.removeAllListeners('batch-progress')
     window.electron.ipcRenderer.removeAllListeners('telegram-url-received')
     window.electron.ipcRenderer.removeAllListeners('telegram-download-start')
   }
@@ -324,13 +391,25 @@
   const handleGetList = (e, v) => {
     const newList = v.sort((a, b) => parseCreatedAt(b.created_at) - parseCreatedAt(a.created_at))
 
+    // Index the current list once instead of scanning it for every incoming row (was O(n²)).
+    const byId = new Map()
+    const byTempid = new Map()
+    const byUrlStatus = new Map()
+    for (const it of locallist) {
+      if (it.id != null && !byId.has(it.id)) byId.set(it.id, it)
+      if (it.tempid != null && !byTempid.has(it.tempid)) byTempid.set(it.tempid, it)
+      if (it.url != null) {
+        const key = `${it.url}::${it.status}`
+        if (!byUrlStatus.has(key)) byUrlStatus.set(key, it)
+      }
+    }
+
     locallist = newList.map((item) => {
-      const existing = locallist.find(
-        (it) =>
-          (item.id && it.id === item.id) ||
-          (item.tempid && it.tempid === item.tempid) ||
-          (item.url === it.url && item.status === it.status)
-      )
+      const existing =
+        (item.id != null && byId.get(item.id)) ||
+        (item.tempid != null && byTempid.get(item.tempid)) ||
+        (item.url != null && byUrlStatus.get(`${item.url}::${item.status}`)) ||
+        undefined
 
       const thumb = item.thumb
 
@@ -386,24 +465,31 @@
     fetching_video = false
 
     if (v.error) {
-      notifications.error('Failed to get video data', { duration: 2000 })
+      const message = typeof v.error === 'string' ? v.error : v.error?.message
+      notifications.error(message || 'Failed to get video data', { duration: 4500 })
       window_video = false
+      getdata = false
       return
     }
 
     if (v.is_batch && v.batch_urls && v.batch_urls.length > 0) {
       window_video = false
       getdata = false
-      batchUrls = v.batch_urls
-      batchModalOpen = true
-      batchQuality = 'max'
-      batchDelay = 4000
-      notifications.info(`Found ${v.batch_urls.length} videos in album`, { duration: 3000 })
+      if (openBatchModal(v.batch_urls, { albumTitle: v.title })) {
+        notifications.info(`Found ${v.batch_urls.length} videos in album`, { duration: 3000 })
+      }
       return
     }
 
     window_video = true
-    updateList(v)
+
+    if (!updateList(v)) {
+      window_video = false
+      getdata = false
+      notifications.error(v.error_message || `This video is not available (status ${v.status})`, {
+        duration: 4500
+      })
+    }
   }
 
   const handleDeletedItem = (e, { id }) => {
@@ -411,82 +497,7 @@
   }
 
   // --- Helper Functions ---
-  const parseCreatedAtCache = new Map()
-  const formatTimeCache = new Map()
-  const bytesToSizeCache = new Map()
   const siteColorCache = new Map()
-
-  function sameItem(a, b) {
-    if (!a || !b) return false
-    if (a.tempid != null && b.tempid != null) return a.tempid === b.tempid
-    if (a.id != null && b.id != null) return a.id === b.id
-    if (a.url && b.url) return a.url === b.url
-    return false
-  }
-
-  function parseCreatedAt(val) {
-    if (parseCreatedAtCache.has(val)) return parseCreatedAtCache.get(val)
-    let result = 0
-    if (!val) result = 0
-    else if (val instanceof Date) result = val.getTime()
-    else if (typeof val === 'number') result = val
-    else if (typeof val === 'string') {
-      const iso = val.includes('T') ? val : val.replace(' ', 'T')
-      const t = new Date(iso).getTime()
-      if (!isNaN(t)) result = t
-      else {
-        const t2 = new Date(val).getTime()
-        result = isNaN(t2) ? 0 : t2
-      }
-    } else {
-      try {
-        const t = new Date(val).getTime()
-        result = isNaN(t) ? 0 : t
-      } catch {
-        result = 0
-      }
-    }
-    parseCreatedAtCache.set(val, result)
-    return result
-  }
-
-  function format_time(time, secondTime) {
-    const cacheKey = `${time}|${secondTime}`
-    if (formatTimeCache.has(cacheKey)) return formatTimeCache.get(cacheKey)
-    const secondsTimeTrack = secondTime ? time : toSeconds(time)
-    const hours = Math.floor(secondsTimeTrack / 3600)
-    const minutes = Math.floor((secondsTimeTrack % 3600) / 60)
-    const seconds = Math.floor(secondsTimeTrack % 60)
-    const result = `${hours > 0 ? hours + 'h ' : ''}${minutes > 0 ? minutes + 'm ' : ''}${seconds > 0 ? seconds + 's' : ''}`
-    formatTimeCache.set(cacheKey, result)
-    return result
-  }
-
-  function bytesToSize(bytes) {
-    if (bytesToSizeCache.has(bytes)) return bytesToSizeCache.get(bytes)
-    var sizes = ['B', 'K', 'M', 'G', 'T', 'P']
-    var b = bytes
-    for (var i = 0; i < sizes.length; i++) {
-      if (b <= 1024) {
-        const result = Math.round(b) + ' ' + sizes[i]
-        bytesToSizeCache.set(bytes, result)
-        return result
-      }
-      b = parseFloat(b / 1024).toFixed(2)
-    }
-    const result = b + ' P'
-    bytesToSizeCache.set(bytes, result)
-    return result
-  }
-
-  function toSeconds(timemark) {
-    if (!timemark) return 0
-    const parts = timemark.split(':')
-    if (parts.length < 3) return 0
-    const [hh, mm, ss] = parts
-    const seconds = parseFloat(ss) + (parseInt(mm, 10) || 0) * 60 + (parseInt(hh, 10) || 0) * 3600
-    return isNaN(seconds) ? 0 : seconds
-  }
 
   function copytext(text) {
     navigator.clipboard.writeText(text)
@@ -503,28 +514,30 @@
   }
 
   function updateList(v) {
-    if (v.status == 200) {
-      video_test = !v.force_type ? { src: v.video_test } : { src: v.video_test, type: v.force_type }
-      title_video = decodeURI(v.title)
-      time_video = v.time
-      thumb_video = v.thumb
-      site_video = v.site
-      url_video = v.url
-      embed = v.embed
-      referer = v.referer
-      proxy_method_video = v.proxy_method || false
-      quality_list =
-        v.list_quality && v.list_quality.length > 0
-          ? v.list_quality.sort((a, b) => b.quality - a.quality)
-          : [{ url: '', quality: 'original', size: '' }]
-      selected_quality = quality_list[0]?.url || ''
-      subtitle_list = v.subtitles || []
-      selected_subtitle = ''
+    if (v.status != 200) return false
 
-      setTimeout(() => {
-        getdata = false
-      }, 1500)
-    }
+    video_test = !v.force_type ? { src: v.video_test } : { src: v.video_test, type: v.force_type }
+    title_video = decodeURI(v.title)
+    time_video = v.time
+    thumb_video = v.thumb
+    site_video = v.site
+    url_video = v.url
+    embed = v.embed
+    referer = v.referer
+    proxy_method_video = v.proxy_method || false
+    quality_list =
+      v.list_quality && v.list_quality.length > 0
+        ? v.list_quality.sort((a, b) => b.quality - a.quality)
+        : [{ url: '', quality: 'original', size: '' }]
+    selected_quality = quality_list[0]?.url || ''
+    subtitle_list = v.subtitles || []
+    selected_subtitle = ''
+
+    setTimeout(() => {
+      getdata = false
+    }, 1500)
+
+    return true
   }
 
   function handleDuration(seconds) {
@@ -743,7 +756,7 @@
       const localFiles = await window.electron.ipcRenderer.invoke('list-local-extensions')
       const localNames = new Set(localFiles)
 
-      remoteExtensions = allRemote.filter(r => !localNames.has(r.name))
+      remoteExtensions = allRemote.filter((r) => !localNames.has(r.name))
     } catch (error) {
       console.error('Error fetching remote extensions:', error)
     }
@@ -878,14 +891,230 @@
     }
   }
 
+  function openBatchModal(urls, { albumTitle = '' } = {}) {
+    const cleanUrls = [
+      ...new Set(
+        (urls || []).filter(
+          (rawUrl) => typeof rawUrl === 'string' && /^https?:\/\//i.test(rawUrl.trim())
+        )
+      )
+    ]
+
+    if (cleanUrls.length === 0) {
+      notifications.error('No valid links found')
+      return false
+    }
+
+    batchResolveToken++
+    batchItems = cleanUrls.map((rawUrl) => createBatchItem(rawUrl.trim(), albumTitle))
+    batchModalOpen = true
+    batchQuality = 'max'
+    batchFormat = settings.default_format || 'mkv'
+    batchDelay = 4000
+    batchSkipCount = 0
+    batchSubtitleMode = 'none'
+    batchSubtitleLanguage = ''
+    batchProgress = {
+      total: 0,
+      processed: 0,
+      remaining: 0,
+      status: '',
+      currentUrl: ''
+    }
+    batchPreview = null
+    batchPreviewUrl = cleanUrls[0]
+    batchPreviewLoading = true
+    batchResolving = false
+    resolveBatchMetadata()
+    return true
+  }
+
+  async function resolveBatchItem(index, token) {
+    const item = batchItems[index]
+    if (!item) return
+    if (token !== batchResolveToken) return
+    if (item.resolving && item.resolveToken === token) return
+
+    item.resolving = true
+    item.resolveToken = token
+    if (item.status === 'pending' || item.status === 'failed') item.status = 'resolving'
+
+    try {
+      const result = await window.electron.ipcRenderer.invoke('resolve-video-metadata', {
+        url: item.url
+      })
+
+      if (token !== batchResolveToken) return
+
+      if (result?.success) {
+        item.meta = result
+        item.resolved = true
+        item.isAlbum = !!result.is_batch
+        item.albumCount = result.batch_urls?.length || 0
+        item.title = result.title || item.title
+        item.thumb = result.thumb || ''
+        item.site = result.site || ''
+        item.duration = result.time || ''
+        item.quality = result.list_quality?.[0]?.quality || ''
+        item.error = ''
+
+        if (item.isAlbum) {
+          item.status = 'album'
+          item.title = result.title
+            ? `${result.title} · album (${item.albumCount})`
+            : `Album · ${item.albumCount} links`
+        } else {
+          item.status = 'ready'
+        }
+
+        if (item.url === batchPreviewUrl) {
+          batchPreview = result
+        }
+      } else {
+        item.resolved = false
+        item.status = 'failed'
+        item.error = result?.error || 'Could not load metadata'
+      }
+    } catch (error) {
+      if (token !== batchResolveToken) return
+      item.resolved = false
+      item.status = 'failed'
+      item.error = error?.message || 'Could not load metadata'
+    } finally {
+      if (item.resolveToken === token) {
+        item.resolving = false
+      }
+      if (token === batchResolveToken && item.url === batchPreviewUrl) {
+        batchPreviewLoading = false
+      }
+    }
+  }
+
+  async function resolveBatchMetadata({ onlyFailed = false } = {}) {
+    if (batchItems.length === 0) return
+
+    const token = ++batchResolveToken
+    batchResolving = true
+
+    const pending = batchItems
+      .map((item, index) => ({ item, index }))
+      .filter(({ item }) => (onlyFailed ? item.status === 'failed' : !item.resolved))
+
+    if (pending.length === 0) {
+      batchResolving = false
+      return
+    }
+
+    if (!batchPreviewUrl) batchPreviewUrl = batchItems[0]?.url || ''
+
+    const previewIndex = pending.findIndex((entry) => entry.item.url === batchPreviewUrl)
+    const previewEntry = previewIndex >= 0 ? pending.splice(previewIndex, 1)[0] : null
+
+    if (previewEntry) {
+      batchPreviewLoading = !batchPreview
+      await resolveBatchItem(previewEntry.index, token)
+      batchPreviewLoading = false
+    }
+
+    let cursor = 0
+    const worker = async () => {
+      while (token === batchResolveToken) {
+        const entry = pending[cursor++]
+        if (!entry) return
+        await resolveBatchItem(entry.index, token)
+      }
+    }
+
+    await Promise.all(Array.from({ length: Math.min(3, pending.length) }, worker))
+
+    if (token === batchResolveToken) {
+      batchResolving = false
+      batchPreviewLoading = false
+    }
+  }
+
+  async function selectBatchPreview(index) {
+    const item = batchItems[index]
+    if (!item) return
+
+    batchPreviewUrl = item.url
+
+    if (item.meta) {
+      batchPreview = item.meta
+      batchPreviewLoading = false
+      return
+    }
+
+    batchPreview = null
+    batchPreviewLoading = true
+    const token = batchResolveToken
+
+    if (!item.resolving) {
+      await resolveBatchItem(index, token)
+    }
+
+    if (batchPreviewUrl === item.url) batchPreviewLoading = false
+  }
+
+  function removeBatchItem(index) {
+    const removed = batchItems[index]
+    if (!removed) return
+
+    const wasPreview = removed.url === batchPreviewUrl
+    batchItems = batchItems.filter((_, itemIndex) => itemIndex !== index)
+
+    if (batchItems.length === 0) {
+      batchModalOpen = false
+      batchPreview = null
+      batchPreviewUrl = ''
+      batchPreviewLoading = false
+      batchSkipCount = 0
+      return
+    }
+
+    if (batchSkipCount > batchItems.length - 1) {
+      batchSkipCount = Math.max(0, batchItems.length - 1)
+    }
+
+    if (wasPreview) {
+      const nextIndex = Math.min(index, batchItems.length - 1)
+      const nextItem = batchItems[nextIndex]
+      batchPreviewUrl = nextItem.url
+      batchPreview = nextItem.meta || null
+      if (!nextItem.meta) selectBatchPreview(nextIndex)
+    }
+  }
+
+  function expandBatchAlbum(index) {
+    const item = batchItems[index]
+    const albumUrls = item?.meta?.batch_urls || []
+
+    if (albumUrls.length === 0) {
+      notifications.info('This album has no links to expand', { duration: 2000 })
+      return
+    }
+
+    const existing = new Set(batchItems.map((entry) => entry.url))
+    const additions = albumUrls
+      .filter((albumUrl) => !existing.has(albumUrl))
+      .map((albumUrl) => createBatchItem(albumUrl, item.meta?.title || item.albumTitle))
+
+    if (additions.length === 0) {
+      notifications.info('All album links are already in the list', { duration: 2000 })
+      return
+    }
+
+    batchItems = [...batchItems.slice(0, index), ...additions, ...batchItems.slice(index + 1)]
+
+    notifications.success(`Added ${additions.length} links from the album`, { duration: 2000 })
+    resolveBatchMetadata()
+  }
+
   async function openBatchImport() {
     try {
       const result = await window.electron.ipcRenderer.invoke('pick-batch-file')
       if (result.count > 0) {
-        batchUrls = result.urls
-        batchModalOpen = true
-        batchQuality = 'max'
-        batchDelay = 4000
+        openBatchModal(result.urls)
       } else if (result.error) {
         notifications.error('Error reading file')
       }
@@ -895,27 +1124,60 @@
   }
 
   async function startBatchProcessing() {
-    batchModalOpen = false
-    batchProgress = { total: batchUrls.length, processed: 0, remaining: batchUrls.length }
-    try {
-      const urlsToProcess = batchSkipCount > 0 ? batchUrls.slice(batchSkipCount) : batchUrls
+    const skipCount = Math.min(Math.max(0, Number(batchSkipCount) || 0), batchItems.length)
+    const urlsToProcess = batchItems.slice(skipCount).map((item) => item.url)
 
+    if (urlsToProcess.length === 0) {
+      notifications.error('There are no links to process')
+      return
+    }
+
+    const metadata = {}
+    for (const item of batchItems) {
+      metadata[item.url] = {
+        title: item.title,
+        thumb: item.thumb,
+        site: item.site,
+        time: item.duration,
+        referer: item.meta?.referer || ''
+      }
+    }
+
+    batchModalOpen = false
+    batchProgress = {
+      total: urlsToProcess.length,
+      processed: 0,
+      remaining: urlsToProcess.length,
+      status: 'started',
+      currentUrl: ''
+    }
+
+    batchItems.forEach((item, index) => {
+      if (index < skipCount) {
+        item.status = 'skipped'
+      } else {
+        item.status = 'queued'
+      }
+    })
+
+    try {
       const args = JSON.parse(
         JSON.stringify({
           urls: urlsToProcess,
           quality: batchQuality,
-          delay: batchDelay
+          delay: Number(batchDelay) || 0,
+          format: batchFormat,
+          subtitleMode: batchSubtitleMode,
+          subtitleLanguage: batchSubtitleLanguage,
+          metadata
         })
       )
 
       await window.electron.ipcRenderer.invoke('start-batch-download', args)
 
-      notifications.success(
-        `Processing ${urlsToProcess.length} links (skipped ${batchSkipCount})...`,
-        {
-          duration: 3000
-        }
-      )
+      notifications.success(`Processing ${urlsToProcess.length} links (skipped ${skipCount})...`, {
+        duration: 3000
+      })
     } catch (err) {
       console.error(err)
       notifications.error('Failed to start batch')
@@ -954,11 +1216,9 @@
               getVideo()
               notifications.info('Starting download...', { duration: 2000 })
             } else if (urls.length > 1) {
-              batchUrls = urls
-              batchModalOpen = true
-              batchQuality = 'max'
-              batchDelay = 4000
-              notifications.info(`Found ${urls.length} URLs to import`, { duration: 2000 })
+              if (openBatchModal(urls)) {
+                notifications.info(`Found ${urls.length} URLs to import`, { duration: 2000 })
+              }
             } else {
               notifications.error('No valid URLs found in file')
             }
@@ -975,11 +1235,9 @@
             getVideo()
             notifications.info('Starting download...', { duration: 2000 })
           } else if (urls.length > 1) {
-            batchUrls = urls
-            batchModalOpen = true
-            batchQuality = 'max'
-            batchDelay = 4000
-            notifications.info(`Found ${urls.length} URLs to import`, { duration: 2000 })
+            if (openBatchModal(urls)) {
+              notifications.info(`Found ${urls.length} URLs to import`, { duration: 2000 })
+            }
           }
         }
       }
@@ -1041,80 +1299,35 @@
 {/if}
 
 {#if batchModalOpen}
-  <div class="fixed inset-0 bg-black/70 flex items-center justify-center z-99999 p-4">
-    <div class="bg-[#252525] rounded-lg shadow-xl max-w-sm w-full p-6 border border-[#3d3d3d]">
-      <h3 class="text-lg font-semibold text-white mb-1">Batch Import</h3>
-      <p class="text-gray-400 text-sm mb-4">Found {batchUrls.length} links to process.</p>
-
-      <div class="space-y-4">
-        <div>
-          <label for="quality" class="text-xs font-medium text-gray-300 block mb-1.5"
-            >Video Quality</label
-          >
-          <select
-            id="quality"
-            bind:value={batchQuality}
-            class="w-full bg-[#1B1B1B] border border-[#3d3d3d] text-white text-sm rounded-lg focus:ring-orange-500 focus:border-orange-500 block p-2.5 outline-none"
-          >
-            <option value="max">Max Quality</option>
-            <option value="medium">Medium Quality</option>
-            <option value="low">Low Quality</option>
-          </select>
-        </div>
-
-        <div>
-          <label for="delay" class="text-xs font-medium text-gray-300 block mb-1.5"
-            >Delay between downloads (ms)</label
-          >
-          <input
-            type="number"
-            id="delay"
-            bind:value={batchDelay}
-            min="0"
-            step="100"
-            class="w-full bg-[#1B1B1B] border border-[#3d3d3d] text-white text-sm rounded-lg focus:ring-orange-500 focus:border-orange-500 block p-2.5 outline-none placeholder-gray-500"
-            placeholder="0"
-          />
-          <p class="text-xs text-gray-500 mt-1">Useful to avoid rate limits.</p>
-        </div>
-
-        <div>
-          <label for="skip" class="text-xs font-medium text-gray-300 block mb-1.5"
-            >Skip first N links</label
-          >
-          <input
-            type="number"
-            id="skip"
-            bind:value={batchSkipCount}
-            min="0"
-            max={batchUrls.length - 1}
-            class="w-full bg-[#1B1B1B] border border-[#3d3d3d] text-white text-sm rounded-lg focus:ring-orange-500 focus:border-orange-500 block p-2.5 outline-none placeholder-gray-500"
-            placeholder="0"
-          />
-          <p class="text-xs text-gray-500 mt-1">
-            Skip first {batchSkipCount} links, will process {batchUrls.length - batchSkipCount} links.
-          </p>
-        </div>
-      </div>
-
-      <div class="mt-6 flex justify-end gap-3">
-        <button
-          onclick={() => (batchModalOpen = false)}
-          class="px-4 py-2 bg-[#3d3d3d] hover:bg-[#4d4d4d] text-white rounded-lg text-sm font-medium transition-colors"
-        >
-          Cancel
-        </button>
-        <button
-          onclick={startBatchProcessing}
-          class="px-4 py-2 bg-linear-to-r from-[#FF9027] to-[#FF6B00] hover:from-[#FF9C3F] hover:to-[#FF7B1C] text-white rounded-lg text-sm font-medium transition-colors shadow-lg shadow-orange-900/20"
-        >
-          Start Import
-        </button>
-      </div>
-    </div>
-  </div>
+  <BatchImportModal
+    {batchItems}
+    {batchPreview}
+    {batchPreviewItem}
+    {batchPreviewUrl}
+    {batchPreviewTitle}
+    {batchPreviewSource}
+    {batchPreviewLoading}
+    {batchResolvedCount}
+    {batchFailedCount}
+    {batchResolving}
+    {batchProcessCount}
+    {batchSubtitleLanguages}
+    bind:batchQuality
+    bind:batchFormat
+    bind:batchSubtitleMode
+    bind:batchSubtitleLanguage
+    bind:batchDelay
+    bind:batchSkipCount
+    {PlayerComponent}
+    useEmbed={settings.use_embed}
+    onResolve={resolveBatchMetadata}
+    onSelect={selectBatchPreview}
+    onRemove={removeBatchItem}
+    onExpand={expandBatchAlbum}
+    onStart={startBatchProcessing}
+    onClose={() => (batchModalOpen = false)}
+  />
 {/if}
-
 <div
   class="w-full h-10 bg-[#202020] flex items-center justify-between top-0 left-0 right-0 absolute move z-99 pl-3"
 >
@@ -1473,649 +1686,28 @@
   ondrop={handleDrop}
 >
   {#if settings_open}
-    <div
-      class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4 top-10"
-    >
-      <div
-        class="bg-[#1e1e1e] w-full max-w-2xl rounded-xl border border-[#3a3a3a] shadow-2xl overflow-hidden"
-      >
-        <div class="border-b border-[#3a3a3a] flex items-center justify-between px-5 py-2">
-          <div class="flex items-center gap-3">
-            <SettingsIcon size={20} class="text-[#FF9027]" />
-            <h2 class="text-lg font-semibold text-white">Settings</h2>
-          </div>
-          <button
-            class="p-1.5 rounded-full hover:bg-[#3a3a3a] text-gray-400 hover:text-white transition-colors"
-            onclick={closeSettings}
-            title="Close settings"
-          >
-            <XIcon size={18} />
-          </button>
-        </div>
-
-        <div class="p-6 max-h-[70vh] overflow-y-auto custom-scrollbar">
-          <div class="space-y-6">
-            <div class="space-y-4">
-              <h3 class="text-sm font-medium text-gray-300 uppercase tracking-wider">
-                Download Settings
-              </h3>
-              <div class="space-y-1.5">
-                <label for="setting-ffmpeg" class="block text-sm font-medium text-gray-200">
-                  FFmpeg Path
-                  <span class="ml-1 text-xs text-gray-400 font-normal"
-                    >(Required for video conversion)</span
-                  >
-                </label>
-                <div class="flex gap-2">
-                  <input
-                    id="setting-ffmpeg"
-                    type="text"
-                    readonly
-                    bind:value={settings.ffmpeg_path}
-                    class="flex-1 px-3.5 py-2 bg-[#252525] border border-[#3a3a3a] rounded-lg text-sm text-white truncate"
-                    title={settings.ffmpeg_path}
-                  />
-                  <button
-                    type="button"
-                    onclick={async () => {
-                      const result = await window.electron.ipcRenderer.invoke('open-file-dialog')
-                      if (!result.canceled && result.filePaths.length > 0) {
-                        settings.ffmpeg_path = result.filePaths[0]
-                      }
-                    }}
-                    class="px-3 py-2 bg-[#333333] hover:bg-[#3d3d3d] text-gray-300 hover:text-white rounded-lg text-sm font-medium transition-colors duration-200"
-                    title="Select FFmpeg executable"
-                  >
-                    Browse
-                  </button>
-                </div>
-              </div>
-
-              <div class="space-y-1.5">
-                <label
-                  for="setting-download-folder"
-                  class="block text-sm font-medium text-gray-200"
-                >
-                  Download Folder
-                  <span class="ml-1 text-xs text-gray-400 font-normal"
-                    >(Where videos will be saved)</span
-                  >
-                </label>
-                <div class="flex gap-2">
-                  <input
-                    id="setting-download-folder"
-                    type="text"
-                    readonly
-                    bind:value={settings.download_folder}
-                    class="flex-1 px-3.5 py-2 bg-[#252525] border border-[#3a3a3a] rounded-lg text-sm text-white truncate"
-                    title={settings.download_folder}
-                  />
-                  <button
-                    type="button"
-                    onclick={async () => {
-                      const result = await window.electron.ipcRenderer.invoke(
-                        'open-directory-dialog',
-                        {
-                          title: 'Select Download Folder'
-                        }
-                      )
-                      if (!result.canceled && result.filePaths.length > 0) {
-                        settings.download_folder = result.filePaths[0]
-                      }
-                    }}
-                    class="px-3 py-2 bg-[#333333] hover:bg-[#3d3d3d] text-gray-300 hover:text-white rounded-lg text-sm font-medium transition-colors duration-200"
-                    title="Select download folder"
-                  >
-                    Browse
-                  </button>
-                </div>
-              </div>
-              <div class="flex flex-col gap-4">
-                <div class="space-y-1.5">
-                  <label
-                    for="setting-default-format"
-                    class="block text-sm font-medium text-gray-200"
-                  >
-                    Default Format
-                  </label>
-                  <div class="relative">
-                    <select
-                      id="setting-default-format"
-                      class="w-full px-3.5 py-2 bg-[#252525] border border-[#3a3a3a] hover:border-[#4a4a4a] focus:border-[#FF9027] focus:ring-2 focus:ring-[#FF9027]/30 rounded-lg text-sm text-white transition-all duration-200 appearance-none cursor-pointer"
-                      bind:value={settings.default_format}
-                    >
-                      <option value="mkv">MKV (Recommended)</option>
-                      <option value="mp4">MP4</option>
-                      <option value="mov">MOV</option>
-                    </select>
-                    <div
-                      class="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none"
-                    >
-                      <svg
-                        class="h-4 w-4 text-gray-400"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
-                      >
-                        <path
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                          stroke-width="2"
-                          d="M19 9l-7 7-7-7"
-                        />
-                      </svg>
-                    </div>
-                  </div>
-                </div>
-
-                <div class="space-y-1.5">
-                  <label for="setting-name-file" class="block text-sm font-medium text-gray-200">
-                    Naming Convention
-                  </label>
-                  <div class="relative">
-                    <select
-                      id="setting-name-file"
-                      class="w-full px-3.5 py-2 bg-[#252525] border border-[#3a3a3a] hover:border-[#4a4a4a] focus:border-[#FF9027] focus:ring-2 focus:ring-[#FF9027]/30 rounded-lg text-sm text-white transition-all duration-200 appearance-none cursor-pointer"
-                      bind:value={settings.namefile_type}
-                    >
-                      <option value="video_title">Video Title</option>
-                      <option value="site_title">Site - Title</option>
-                      <option value="title_site">Title - Site</option>
-                      <option value="date_title">Date - Title</option>
-                      <option value="random_uuid">Random UUID</option>
-                    </select>
-                    <div
-                      class="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none"
-                    >
-                      <svg
-                        class="h-4 w-4 text-gray-400"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
-                      >
-                        <path
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                          stroke-width="2"
-                          d="M19 9l-7 7-7-7"
-                        />
-                      </svg>
-                    </div>
-                  </div>
-                </div>
-
-                <div class="space-y-1.5">
-                  <div class="flex items-center justify-between">
-                    <label for="setting-organize-by-site" class="text-sm font-medium text-gray-200">
-                      Organize by Site
-                      <span class="ml-1 text-xs text-gray-400 font-normal"
-                        >Create subfolders per site</span
-                      >
-                    </label>
-                    <label class="relative inline-flex items-center cursor-pointer">
-                      <input
-                        type="checkbox"
-                        id="setting-organize-by-site"
-                        bind:checked={settings.organize_by_site}
-                        class="sr-only peer"
-                      />
-                      <div
-                        class="w-9 h-5 bg-[#252525] border border-[#3a3a3a] rounded-full peer peer-checked:after:translate-x-4 peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[#FF9027]"
-                      ></div>
-                    </label>
-                  </div>
-                </div>
-
-                <div class="space-y-1.5">
-                  <div class="flex items-center justify-between">
-                    <label for="setting-use-embed" class="text-sm font-medium text-gray-200">
-                      Use Embedded Player
-                      <span class="ml-1 text-xs text-gray-400 font-normal">(Experimental)</span>
-                    </label>
-                    <label class="relative inline-flex items-center cursor-pointer">
-                      <input
-                        type="checkbox"
-                        id="setting-use-embed"
-                        bind:checked={settings.use_embed}
-                        class="sr-only peer"
-                      />
-                      <div
-                        class="w-9 h-5 bg-[#252525] border border-[#3a3a3a] rounded-full peer peer-checked:after:translate-x-4 peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[#FF9027]"
-                      ></div>
-                    </label>
-                  </div>
-                </div>
-
-                <div class="space-y-1.5">
-                  <label for="setting-threads" class="block text-sm font-medium text-gray-200">
-                    CPU Threads
-                    <span class="ml-1 text-xs text-gray-400 font-normal">(Recommended: 1)</span>
-                  </label>
-                  <div class="relative">
-                    <select
-                      id="setting-threads"
-                      class="w-full px-3.5 py-2 bg-[#252525] border border-[#3a3a3a] hover:border-[#4a4a4a] focus:border-[#FF9027] focus:ring-2 focus:ring-[#FF9027]/30 rounded-lg text-sm text-white transition-all duration-200 appearance-none cursor-pointer"
-                      bind:value={settings.threads}
-                    >
-                      <option value="1">1 Core (Balanced)</option>
-                      <option value="2">2 Cores</option>
-                      <option value="3">3 Cores</option>
-                      <option value="4">4 Cores (Max)</option>
-                    </select>
-                    <div
-                      class="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none"
-                    >
-                      <svg
-                        class="h-4 w-4 text-gray-400"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
-                      >
-                        <path
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                          stroke-width="2"
-                          d="M19 9l-7 7-7-7"
-                        />
-                      </svg>
-                    </div>
-                  </div>
-                </div>
-
-                <div class="space-y-1.5">
-                  <label for="setting-concurrent" class="block text-sm font-medium text-gray-200">
-                    Simultaneous Downloads
-                    <span class="ml-1 text-xs text-gray-400 font-normal">(Recommended: 2)</span>
-                  </label>
-                  <div class="relative">
-                    <input
-                      id="setting-concurrent"
-                      type="number"
-                      min="2"
-                      max="5"
-                      bind:value={settings.concurrent_downloads}
-                      class="w-full px-3.5 py-2 bg-[#252525] border border-[#3a3a3a] hover:border-[#4a4a4a] focus:border-[#FF9027] focus:ring-2 focus:ring-[#FF9027]/30 rounded-lg text-sm text-white transition-all duration-200"
-                    />
-                  </div>
-                </div>
-
-                <div class="space-y-1.5">
-                  <label
-                    for="setting-custom-ffmpeg"
-                    class="block text-sm font-medium text-gray-200"
-                  >
-                    Custom FFmpeg Params
-                    <span class="ml-1 text-xs text-gray-400 font-normal">(Advanced)</span>
-                  </label>
-                  <textarea
-                    id="setting-custom-ffmpeg"
-                    bind:value={settings.custom_ffmpeg_params}
-                    rows="2"
-                    class="w-full px-3.5 py-2 bg-[#252525] border border-[#3a3a3a] hover:border-[#4a4a4a] focus:border-[#FF9027] focus:ring-2 focus:ring-[#FF9027]/30 rounded-lg text-sm text-white transition-all duration-200 resize-none font-mono placeholder-gray-500"
-                    placeholder="e.g. -preset fast -crf 23"
-                  ></textarea>
-                  <p class="text-xs text-gray-500">
-                    FFmpeg output flags appended to every download.
-                  </p>
-                </div>
-
-                <div class="space-y-3 pt-4 border-t border-[#3a3a3a]">
-                  <div class="flex items-center justify-between">
-                    <label for="telegram-enabled" class="text-sm font-medium text-gray-200">
-                      Telegram Bot
-                      <span class="ml-1 text-xs text-gray-400 font-normal">Enable TelegramBot</span>
-                    </label>
-                    <label class="relative inline-flex items-center cursor-pointer">
-                      <input
-                        type="checkbox"
-                        id="telegram-enabled"
-                        bind:checked={settings.telegram_enabled}
-                        class="sr-only peer"
-                      />
-                      <div
-                        class="w-9 h-5 bg-[#252525] border border-[#3a3a3a] rounded-full peer peer-checked:after:translate-x-4 peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[#FF9027]"
-                      ></div>
-                    </label>
-                  </div>
-
-                  {#if settings.telegram_enabled}
-                    <div class="space-y-1.5">
-                      <label for="telegram-token" class="block text-sm font-medium text-gray-200">
-                        Bot Token
-                        <span class="ml-1 text-xs text-gray-400 font-normal">From @BotFather</span>
-                      </label>
-                      <input
-                        id="telegram-token"
-                        type="password"
-                        bind:value={settings.telegram_token}
-                        class="w-full px-3.5 py-2 bg-[#252525] border border-[#3a3a3a] hover:border-[#4a4a4a] focus:border-[#FF9027] focus:ring-2 focus:ring-[#FF9027]/30 rounded-lg text-sm text-white transition-all duration-200 placeholder-gray-500"
-                        placeholder="1234567890:ABCdefGHIjklMNOpqrsTUVwxyz"
-                      />
-                    </div>
-                  {/if}
-                </div>
-
-                {#if isDev}
-                  <div class="space-y-1.5 border-t border-[#3a3a3a] pt-4 mt-2">
-                    <h4 class="text-xs font-semibold text-purple-400 uppercase tracking-wide mb-3">
-                      Developer Settings
-                    </h4>
-                    <div class="flex items-center justify-between">
-                      <label for="dev-auto-sync" class="text-sm font-medium text-gray-200">
-                        Auto-sync extensions
-                        <span class="ml-1 text-xs text-gray-400 font-normal block"
-                          >Sync project extensions to Documents</span
-                        >
-                      </label>
-                      <label class="relative inline-flex items-center cursor-pointer">
-                        <input
-                          type="checkbox"
-                          id="dev-auto-sync"
-                          checked={settings.dev_auto_sync}
-                          onchange={(e) => {
-                            settings.dev_auto_sync = e.currentTarget.checked
-                            if (settings.dev_auto_sync) syncExtensions()
-                          }}
-                          class="sr-only peer"
-                        />
-                        <div
-                          class="w-9 h-5 bg-[#252525] border border-[#3a3a3a] rounded-full peer peer-checked:after:translate-x-4 peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-purple-600"
-                        ></div>
-                      </label>
-                    </div>
-                  </div>
-                {/if}
-                <div class="space-y-1.5">
-                  <label for="setting-branch" class="block text-sm font-medium text-gray-200">
-                    Extension Branch
-                    <span class="ml-1 text-xs text-gray-400 font-normal">(For updates)</span>
-                  </label>
-                  <div class="relative">
-                    <select
-                      id="setting-branch"
-                      class="w-full px-3.5 py-2 bg-[#252525] border border-[#3a3a3a] hover:border-[#4a4a4a] focus:border-[#FF9027] focus:ring-2 focus:ring-[#FF9027]/30 rounded-lg text-sm text-white transition-all duration-200 appearance-none cursor-pointer"
-                      bind:value={settings.extension_branch}
-                      onchange={() => { checkForUpdates(); remoteExtensions = [] }}
-                    >
-                      <option value="main">Main (Stable)</option>
-                      <option value="dev">Dev (Beta)</option>
-                    </select>
-                    <div
-                      class="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none"
-                    >
-                      <svg
-                        class="h-4 w-4 text-gray-400"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
-                      >
-                        <path
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                          stroke-width="2"
-                          d="M19 9l-7 7-7-7"
-                        />
-                      </svg>
-                    </div>
-                  </div>
-                </div>
-
-                <div class="space-y-3 pt-4 border-t border-[#3a3a3a]">
-                  <h4 class="text-xs font-semibold text-gray-400 uppercase tracking-wide">
-                    Export Data
-                  </h4>
-                  <div class="flex gap-3">
-                    <button
-                      onclick={async () => {
-                        try {
-                          const csv = await window.electron.ipcRenderer.invoke('export-list', {
-                            format: 'csv'
-                          })
-                          const blob = new Blob([csv], { type: 'text/csv' })
-                          const url = URL.createObjectURL(blob)
-                          const a = document.createElement('a')
-                          a.href = url
-                          a.download = `horny-downloader-export-${new Date().toISOString().split('T')[0]}.csv`
-                          a.click()
-                          URL.revokeObjectURL(url)
-                          notifications.success('Exported to CSV', { duration: 2000 })
-                        } catch (e) {
-                          notifications.error('Export failed')
-                        }
-                      }}
-                      class="flex-1 px-4 py-2 bg-[#333333] hover:bg-[#3d3d3d] text-gray-300 hover:text-white rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
-                    >
-                      <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                          stroke-width="2"
-                          d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-                        />
-                      </svg>
-                      Export CSV
-                    </button>
-                    <button
-                      onclick={async () => {
-                        try {
-                          const json = await window.electron.ipcRenderer.invoke('export-list', {
-                            format: 'json'
-                          })
-                          const blob = new Blob([json], { type: 'application/json' })
-                          const url = URL.createObjectURL(blob)
-                          const a = document.createElement('a')
-                          a.href = url
-                          a.download = `horny-downloader-export-${new Date().toISOString().split('T')[0]}.json`
-                          a.click()
-                          URL.revokeObjectURL(url)
-                          notifications.success('Exported to JSON', { duration: 2000 })
-                        } catch (e) {
-                          notifications.error('Export failed')
-                        }
-                      }}
-                      class="flex-1 px-4 py-2 bg-[#333333] hover:bg-[#3d3d3d] text-gray-300 hover:text-white rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
-                    >
-                      <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                          stroke-width="2"
-                          d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"
-                        />
-                      </svg>
-                      Export JSON
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {#if availableUpdates.length > 0}
-              <div class="space-y-4">
-                <div class="flex items-center justify-between">
-                  <h3 class="text-sm font-medium text-gray-300 uppercase tracking-wider">
-                    Available Updates ({availableUpdates.length})
-                  </h3>
-                </div>
-                <div class="space-y-3">
-                  {#each availableUpdates as update}
-                    <div
-                      class="flex items-center justify-between p-3 bg-[#252525] rounded-lg border border-orange-500/30"
-                    >
-                      <div class="flex items-center gap-3">
-                        <div class="w-2 h-2 bg-orange-500 rounded-full animate-pulse"></div>
-                        <div>
-                          <p class="text-sm font-medium text-white">
-                            {update.name.replace('Extension', '')}
-                          </p>
-                          <p class="text-xs text-gray-400">
-                            v{update.currentVersion} →
-                            <span class="text-green-400">v{update.newVersion}</span>
-                          </p>
-                        </div>
-                      </div>
-                      <button
-                        onclick={() => updateExtension(update)}
-                        class="px-3 py-1.5 bg-orange-600 hover:bg-orange-700 text-white text-xs font-medium rounded transition-colors"
-                      >
-                        Update
-                      </button>
-                    </div>
-                  {/each}
-                </div>
-              </div>
-              <div class="w-full h-px bg-[#3a3a3a] my-4"></div>
-            {/if}
-
-            <div class="space-y-4">
-              <div class="flex items-center justify-between">
-                <h3 class="text-sm font-medium text-gray-300 uppercase tracking-wider">
-                  Extensions Status ({Object.keys(extensions_status.loaded || {}).length} loaded, {extensions_status.total ||
-                    0} total)
-                </h3>
-                <button
-                  onclick={() => window.electron.ipcRenderer.send('openExtensionsFolder')}
-                  class="text-xs text-[#FF9027] hover:text-[#FF6B00] font-medium flex items-center gap-1.5 transition-colors px-2 py-1 rounded hover:bg-[#FF9027]/10"
-                  title="Open Extensions Folder"
-                >
-                  <FolderIcon size={14} />
-                  Open Folder
-                </button>
-                <button
-                  onclick={reloadExtensions}
-                  class="text-xs text-[#FF9027] hover:text-[#FF6B00] font-medium flex items-center gap-1.5 transition-colors px-2 py-1 rounded hover:bg-[#FF9027]/10"
-                  title="Reload Extensions"
-                >
-                  <RefreshCw size={14} />
-                  Reload
-                </button>
-              </div>
-              <div class="space-y-3">
-                {#each Object.entries(extensions_status.loaded || {}) as [name, info]}
-                  <div
-                    class="flex items-center justify-between p-3 bg-[#252525] rounded-lg border border-[#3a3a3a]"
-                  >
-                    <div class="flex items-center gap-3">
-                      <div class="w-2 h-2 bg-green-500 rounded-full"></div>
-                      <div>
-                        <p class="text-sm font-medium text-white">
-                          {name.replace('Extension', '')}
-                          {#if info.config?.proxy_method}
-                            <span class="inline-flex items-center px-1.5 py-0.5 ml-1 rounded text-[10px] font-semibold bg-amber-500/20 text-amber-400 border border-amber-500/30" title="Downloads segments via browser to bypass Cloudflare/CDN protection">PROXY</span>
-                          {/if}
-                        </p>
-                        <p class="text-xs text-gray-400">
-                          Domains: {info.domains.join(', ')}
-                        </p>
-                      </div>
-                    </div>
-                    <span class="text-xs text-green-400 font-medium">Loaded</span>
-                  </div>
-                {/each}
-
-                {#each Object.entries(extensions_status.failed || {}) as [name, info]}
-                  <div
-                    class="flex items-center justify-between p-3 bg-[#252525] rounded-lg border border-[#3a3a3a] opacity-60"
-                  >
-                    <div class="flex items-center gap-3">
-                      <div class="w-2 h-2 bg-red-500 rounded-full"></div>
-                      <div>
-                        <p class="text-sm font-medium text-white">
-                          {name.replace('Extension', '')}
-                        </p>
-                        <p class="text-xs text-gray-400">
-                          {info.error || 'Failed to load'}
-                        </p>
-                      </div>
-                    </div>
-                    <span class="text-xs text-red-400 font-medium">Failed</span>
-                  </div>
-                {/each}
-
-                {#if Object.keys(extensions_status.loaded || {}).length === 0 && Object.keys(extensions_status.failed || {}).length === 0}
-                  <div class="text-center py-8 text-gray-400">
-                    <p class="text-sm">No extensions found</p>
-                  </div>
-                {/if}
-              </div>
-
-              <div class="w-full h-px bg-[#3a3a3a] my-4"></div>
-
-              <div class="space-y-4">
-                <div class="flex items-center justify-between">
-                  <h3 class="text-sm font-medium text-gray-300 uppercase tracking-wider">
-                    Install Extensions
-                  </h3>
-                  <button
-                    onclick={fetchRemoteExtensions}
-                    class="text-xs text-[#FF9027] hover:text-[#FF6B00] font-medium flex items-center gap-1.5 transition-colors px-2 py-1 rounded hover:bg-[#FF9027]/10"
-                  >
-                    <RefreshCw size={14} />
-                    Check Available
-                  </button>
-                </div>
-                {#if remoteExtensions.length > 0}
-                  <div class="space-y-3">
-                    {#each remoteExtensions as ext}
-                      <div class="flex items-center justify-between p-3 bg-[#252525] rounded-lg border border-[#3a3a3a]">
-                        <div class="flex items-center gap-3">
-                          <div class="w-2 h-2 bg-blue-500 rounded-full"></div>
-                          <div>
-                            <p class="text-sm font-medium text-white">{ext.displayName}</p>
-                            <p class="text-xs text-gray-400">Not installed</p>
-                          </div>
-                        </div>
-                        <button
-                          onclick={() => installExtension(ext)}
-                          disabled={isInstalling}
-                          class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-medium rounded transition-colors"
-                        >
-                          {isInstalling ? 'Installing...' : 'Install'}
-                        </button>
-                      </div>
-                    {/each}
-                  </div>
-                {:else if remoteExtensions.length === 0}
-                  <div class="text-center py-4 text-gray-400">
-                    <p class="text-sm">No more extensions found</p>
-                  </div>
-                {/if}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div
-          class="bg-[#252525] px-6 py-4 border-t border-[#3a3a3a] flex justify-between items-center"
-        >
-          <button
-            onclick={clearLocalStorage}
-            class="px-4 py-2 text-sm font-medium text-red-400 hover:text-red-300 bg-[#333333] hover:bg-[#3d3d3d] rounded-lg transition-colors duration-200"
-          >
-            Clear LocalStorage
-          </button>
-          <div class="flex space-x-3">
-            <button
-              onclick={closeSettings}
-              class="px-4 py-2 text-sm font-medium text-gray-300 hover:text-white bg-[#333333] hover:bg-[#3d3d3d] rounded-lg transition-colors duration-200"
-            >
-              Cancel
-            </button>
-            <button
-              onclick={saveSettings}
-              class="px-5 py-2 text-sm font-medium text-white bg-linear-to-r from-[#FF9027] to-[#FF6B00] hover:from-[#FF9C3F] hover:to-[#FF7B1C] rounded-lg transition-all duration-200 transform hover:scale-105 focus:ring-offset-2 focus:ring-offset-[#1e1e1e] shadow-lg hover:shadow-[#FF9027]/20"
-            >
-              Save Changes
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
+    <SettingsModal
+      bind:settings
+      {isDev}
+      {availableUpdates}
+      {extensions_status}
+      bind:remoteExtensions
+      {isInstalling}
+      onClose={closeSettings}
+      onSave={saveSettings}
+      onClearStorage={clearLocalStorage}
+      onUpdateExtension={updateExtension}
+      onReloadExtensions={reloadExtensions}
+      onFetchRemoteExtensions={fetchRemoteExtensions}
+      onInstallExtension={installExtension}
+      onCheckForUpdates={checkForUpdates}
+      onSyncExtensions={syncExtensions}
+    />
   {/if}
 
   <div
     bind:this={listContainer}
-    class="w-full flex-1 mt-[12em] px-6 pb-8 overflow-y-auto custom-scrollbar scroll relative"
+    class="w-full flex-1 mt-[12em] px-6 pb-8 overflow-y-auto scroll scroll relative"
     onscroll={handleScroll}
   >
     <span
@@ -2125,9 +1717,10 @@
     </span>
     {#if batchProgress.total > 0}
       <span
-        class="fixed left-0 bottom-0 m-6 mb-16 z-20 px-3 py-1.5 bg-[#1B1B1B]/60 border-[#2d2d2d] text-sm font-medium rounded-full backdrop-blur-sm border shadow-lg"
+        class="fixed left-0 bottom-0 m-6 mb-16 z-20 max-w-[70vw] truncate px-3 py-1.5 bg-[#1B1B1B]/60 border-[#2d2d2d] text-sm font-medium rounded-full backdrop-blur-sm border shadow-lg"
+        title={batchProgressLabel}
       >
-        batch: {batchProgress.processed}/{batchProgress.total}
+        {batchProgressLabel}
       </span>
     {/if}
     <div
@@ -2249,278 +1842,14 @@
         </div>
       {/if}
       {#each paginatedListWithoutCurrent as item (item.id ?? item.tempid)}
-        <div
-          class="group bg-[#1e1e1e] border border-[#2d2d2d] hover:border-[#3d3d3d] rounded-xl p-3 transition-all duration-200"
-        >
-          <div class="flex {viewMode === 'grid' ? 'flex-col gap-3' : 'gap-4'} items-start">
-            <div
-              class="relative shrink-0 {viewMode === 'grid'
-                ? 'w-full aspect-video'
-                : 'w-32 h-20'} rounded-lg overflow-hidden bg-[#252525] border border-[#3a3a3a] group-hover:border-[#4a4a4a] transition-colors"
-            >
-              <img
-                src={item.thumb.includes('http')
-                  ? item.thumb
-                  : 'hornydl://' + item.thumb.replace(/\\/g, '/')}
-                alt={item.title}
-                loading="lazy"
-                class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-              />
-
-              {#if item.status == 1}
-                <div class="absolute bottom-0 left-0 right-0 h-1.5 bg-[#2d2d2d] overflow-hidden">
-                  <div
-                    class="h-full bg-linear-to-r from-[#FF9027] to-[#FF6B00] transition-all duration-300"
-                    style={`width: ${item.load || 0}%`}
-                  ></div>
-                </div>
-              {/if}
-
-              <div class="absolute top-2 left-2">
-                {#if item.status == 0}
-                  <span
-                    class="px-2 py-0.5 bg-[#2a2a1a] text-[#ecc94b] text-[10px] font-medium rounded-full flex items-center gap-1.5"
-                  >
-                    <span class="w-1.5 h-1.5 bg-[#ecc94b] rounded-full"></span>
-                    Queued
-                  </span>
-                {:else if item.status == 1}
-                  <span
-                    class="px-2 py-0.5 bg-[#1a2a2a] text-[#4fd1c5] text-[10px] font-medium rounded-full flex items-center gap-1.5"
-                  >
-                    <span class="w-1.5 h-1.5 bg-[#4fd1c5] rounded-full animate-pulse"></span>
-                    {item.load}%
-                  </span>
-                {:else if item.status == 2}
-                  <span
-                    class="px-2 py-0.5 bg-[#1a2a1a] text-[#68d391] text-[10px] font-medium rounded-full flex items-center gap-1.5"
-                  >
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      class="h-2.5 w-2.5"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                    >
-                      <path
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        stroke-width="3"
-                        d="M5 13l4 4L19 7"
-                      />
-                    </svg>
-                    Done
-                  </span>
-                {:else if item.status == 3}
-                  <span
-                    class="px-2 py-0.5 bg-[#2a1a1a] text-[#fc8181] text-[10px] font-medium rounded-full flex items-center gap-1.5"
-                  >
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      class="h-2.5 w-2.5"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                    >
-                      <path
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        stroke-width="2"
-                        d="M6 18L18 6M6 6l12 12"
-                      />
-                    </svg>
-                    Failed
-                  </span>
-                {/if}
-              </div>
-            </div>
-
-            <div class="flex-1 min-w-0 w-full">
-              {#if viewMode === 'grid'}
-                <div class="flex items-center justify-between gap-2 mb-2">
-                  <span
-                    class="px-2 py-0.5 text-[10px] font-medium rounded-lg border border-opacity-20 shrink-0"
-                    style={`background-color: ${siteColor(item.site)}10; color: ${siteColor(item.site)}; border-color: ${siteColor(item.site)}`}
-                  >
-                    {item.site}
-                  </span>
-                  <div class="flex items-center gap-1 shrink-0">
-                    {#if (item.status == 1 && item.load == null) || item.status == 2 || item.status == 3}
-                      <button
-                        class="p-1.5 rounded-lg hover:bg-[#2d2d2d] text-gray-400 hover:text-white transition-colors"
-                        title="Open file location"
-                        onclick={() => reveal(item)}
-                      >
-                        <FolderIcon color="white" size="16" />
-                      </button>
-                      <button
-                        class="p-1.5 rounded-lg hover:bg-[#2d2d2d] text-gray-400 hover:text-white transition-colors"
-                        title="Copy URL"
-                        onclick={() => copytext(item.url)}
-                      >
-                        <ClipboardIcon color="white" size="16" />
-                      </button>
-                    {/if}
-
-                    <button
-                      class="p-1.5 rounded-lg hover:bg-[#2d2d2d] text-gray-400 hover:text-white transition-colors"
-                      onclick={() => removeItem(item)}
-                      title="Remove from list"
-                    >
-                      <XIcon color="white" size={16} />
-                    </button>
-                  </div>
-                </div>
-
-                <h3
-                  class="text-sm font-medium text-white group-hover:text-[#FF9027] transition-colors line-clamp-2 mb-1.5"
-                  title={item.title}
-                >
-                  {item.title}
-                </h3>
-
-                <div class="flex items-center gap-1.5 text-xs text-gray-400 flex-wrap">
-                  {#if item.duration}
-                    <span class="flex items-center gap-1">
-                      <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        class="h-3 w-3 opacity-70"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
-                      >
-                        <path
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                          stroke-width="2"
-                          d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
-                        />
-                      </svg>
-                      {format_time(item.duration, true)}
-                    </span>
-                  {/if}
-
-                  {#if item.quality}
-                    <span class="text-gray-500">•</span>
-                    <span
-                      class="px-1.5 py-0.5 bg-[#252525] rounded text-[10px] font-mono text-gray-300"
-                    >
-                      {#if item.quality == 'original'}
-                        Original
-                      {:else}
-                        {!item.quality.includes('k') ? `${item.quality}p` : item.quality}
-                      {/if}
-                    </span>
-                  {/if}
-
-                  {#if item.format}
-                    <span class="text-gray-500">•</span>
-                    <span>{item.format}</span>
-                  {/if}
-
-                  {#if item.filesize}
-                    <span class="text-gray-500">•</span>
-                    <span>{bytesToSize(item.filesize)}</span>
-                  {/if}
-                </div>
-              {:else}
-                <div class="flex items-start justify-between gap-2">
-                  <div class="flex-1 min-w-0">
-                    <h3
-                      class="text-sm font-medium text-white group-hover:text-[#FF9027] transition-colors line-clamp-2"
-                      title={item.title}
-                    >
-                      {item.title}
-                    </h3>
-
-                    <div class="flex flex-wrap items-center gap-2 mt-1.5">
-                      <span
-                        class="px-2 py-0.5 text-[10px] font-medium rounded-full border border-opacity-20"
-                        style={`background-color: ${siteColor(item.site)}10; color: ${siteColor(item.site)}; border-color: ${siteColor(item.site)}`}
-                      >
-                        {item.site}
-                      </span>
-
-                      <div class="flex items-center gap-1.5 text-xs text-gray-400">
-                        {#if item.duration}
-                          <span class="flex items-center gap-1">
-                            duration:
-                            <svg
-                              xmlns="http://www.w3.org/2000/svg"
-                              class="h-3 w-3 opacity-70"
-                              fill="none"
-                              viewBox="0 0 24 24"
-                              stroke="currentColor"
-                            >
-                              <path
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                                stroke-width="2"
-                                d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
-                              />
-                            </svg>
-                            {format_time(item.duration, true)}
-                          </span>
-                        {/if}
-
-                        {#if item.quality}
-                          <span class="text-gray-500">•</span>
-                          quality:
-                          <span
-                            class="px-1.5 py-0.5 bg-[#252525] rounded text-[10px] font-mono text-gray-300"
-                          >
-                            {#if item.quality == 'original'}
-                              Original
-                            {:else}
-                              {!item.quality.includes('k') ? `${item.quality}p` : item.quality}
-                            {/if}
-                          </span>
-                        {/if}
-
-                        {#if item.format}
-                          <span class="text-gray-500">•</span>
-                          <span class="text-gray-400">format: {item.format}</span>
-                        {/if}
-
-                        {#if item.filesize}
-                          <span class="text-gray-500">•</span>
-                          <span class="text-gray-400">size: {bytesToSize(item.filesize)}</span>
-                        {/if}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div class="flex items-center gap-1">
-                    {#if (item.status == 1 && item.load == null) || item.status == 2 || item.status == 3}
-                      <button
-                        class="p-1.5 rounded-lg hover:bg-[#2d2d2d] text-gray-400 hover:text-white transition-colors"
-                        title="Open file location"
-                        onclick={() => reveal(item)}
-                      >
-                        <FolderIcon color="white" size="18" />
-                      </button>
-                      <button
-                        class="p-1.5 rounded-lg hover:bg-[#2d2d2d] text-gray-400 hover:text-white transition-colors"
-                        title="Open file location"
-                        onclick={() => copytext(item.url)}
-                      >
-                        <ClipboardIcon color="white" size="18" />
-                      </button>
-                    {/if}
-
-                    <button
-                      class="p-1.5 rounded-lg hover:bg-[#2d2d2d] text-gray-400 hover:text-white transition-colors"
-                      onclick={() => removeItem(item)}
-                      title="Remove from list"
-                    >
-                      <XIcon color="white" size={18} />
-                    </button>
-                  </div>
-                </div>
-              {/if}
-            </div>
-          </div>
-        </div>
+        <DownloadItem
+          {item}
+          {viewMode}
+          siteColorValue={siteColor(item.site)}
+          onReveal={reveal}
+          onCopy={copytext}
+          onRemove={removeItem}
+        />
       {/each}
       {#if loadMore}
         <div class="col-span-full text-center py-4">
@@ -2530,228 +1859,49 @@
     </div>
   </div>
   {#if fetching_video}
-    <div class="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div class="bg-[#1e1e1e] border border-[#3a3a3a] rounded-xl p-8 flex flex-col items-center gap-4 shadow-2xl">
-        <svg class="animate-spin h-10 w-10 text-[#FF9027]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+    <div
+      class="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+    >
+      <div
+        class="bg-[#1e1e1e] border border-[#3a3a3a] rounded-xl p-8 flex flex-col items-center gap-4 shadow-2xl"
+      >
+        <svg
+          class="animate-spin h-10 w-10 text-[#FF9027]"
+          xmlns="http://www.w3.org/2000/svg"
+          fill="none"
+          viewBox="0 0 24 24"
+        >
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"
+          ></circle>
+          <path
+            class="opacity-75"
+            fill="currentColor"
+            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+          ></path>
         </svg>
         <span class="text-white text-sm font-medium">Loading video data...</span>
       </div>
     </div>
   {/if}
   {#if window_video}
-    <div
-      class="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4"
-    >
-      <div
-        class="bg-[#1e1e1e] border border-[#3a3a3a] rounded-xl overflow-hidden w-full max-w-4xl shadow-2xl"
-      >
-        <div class="flex items-center justify-between p-4 border-b border-[#3a3a3a] bg-[#252525]">
-          <h2 class="text-lg font-medium text-white">Download Options</h2>
-          <button
-            class="p-1.5 rounded-full hover:bg-[#3a3a3a] text-gray-300 hover:text-white transition-colors"
-            onclick={window_close}
-            aria-label="Close"
-          >
-            <XIcon size={20} />
-          </button>
-        </div>
-
-        <div class="flex flex-row">
-          <div
-            class="w-full md:w-2/3 p-5 border-b md:border-b-0 md:border-r border-[#3a3a3a] bg-[#252525]/50 overflow-hidden"
-          >
-            <div class="aspect-video bg-black rounded-lg overflow-hidden">
-              {#if PlayerComponent}
-                <svelte:component
-                  this={PlayerComponent}
-                  useEmbed={settings.use_embed}
-                  embedUrl={embed}
-                  src={video_test}
-                  poster={thumb_video}
-                  title={title_video}
-                  onDuration={handleDuration}
-                  subtitles={subtitle_list}
-                />
-              {:else}
-                <div class="w-full h-full flex items-center justify-center bg-black">
-                  <div class="animate-pulse text-gray-500">Loading player...</div>
-                </div>
-              {/if}
-            </div>
-            <div class="mt-4">
-              <div class="flex items-center gap-2">
-                <h3 class="text-white font-medium text-lg truncate">{title_video}</h3>
-                {#if proxy_method_video}
-                  <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-amber-500/20 text-amber-400 border border-amber-500/30 shrink-0" title="Downloads segments via browser to bypass Cloudflare/CDN protection">
-                    PROXY
-                  </span>
-                {/if}
-              </div>
-              <p class="text-gray-400 text-sm mt-1">Video Duration: {format_time(time_video)}</p>
-            </div>
-          </div>
-
-          <div class="w-2/3 md:w-1/3 p-5">
-            <div class="space-y-6">
-              <div class="space-y-2">
-                <!-- svelte-ignore a11y_label_has_associated_control -->
-                <label class="block text-sm font-medium text-gray-300 mb-1">Quality</label>
-                <div class="relative">
-                  <select
-                    class="w-full bg-[#2d2d2d] border border-[#3a3a3a] text-white text-sm rounded-lg focus:border-[#FF9027] block p-2.5 appearance-none cursor-pointer pr-8"
-                    bind:value={selected_quality}
-                  >
-                    {#each quality_list as data}
-                      <option value={data.url} class="bg-[#2d2d2d] text-white">
-                        {#if data.quality == 'original'}
-                          Original
-                        {:else}
-                          {!data.quality.includes('k') && !data.quality.includes('loading')
-                            ? `${data.quality}p`
-                            : data.quality}
-                        {/if}
-                      </option>
-                    {/each}
-                  </select>
-                  <div class="absolute inset-y-0 right-3 flex items-center pointer-events-none">
-                    <svg
-                      class="w-4 h-4 text-gray-400"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        stroke-width="2"
-                        d="M19 9l-7 7-7-7"
-                      />
-                    </svg>
-                  </div>
-                </div>
-              </div>
-
-              <div class="space-y-2">
-                <span class="block text-sm font-medium text-gray-300 mb-1">Format</span>
-                <div class="relative">
-                  <select
-                    class="w-full bg-[#2d2d2d] border border-[#3a3a3a] text-white text-sm rounded-lg focus:border-[#FF9027] block p-2.5 appearance-none cursor-pointer pr-8"
-                    bind:value={format_video}
-                  >
-                    <option value="mkv" class="bg-[#2d2d2d] text-white">MKV - Matroska</option>
-                    <option value="mp4" class="bg-[#2d2d2d] text-white">MP4 - MPEG-4</option>
-                    <option value="mov" class="bg-[#2d2d2d] text-white">MOV - QuickTime</option>
-                  </select>
-                  <div class="absolute inset-y-0 right-3 flex items-center pointer-events-none">
-                    <svg
-                      class="w-4 h-4 text-gray-400"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        stroke-width="2"
-                        d="M19 9l-7 7-7-7"
-                      />
-                    </svg>
-                  </div>
-                </div>
-              </div>
-
-              {#if subtitle_list.length > 0}
-                <div class="space-y-2">
-                  <span class="block text-sm font-medium text-gray-300 mb-1">Subtitle</span>
-                  <div class="relative">
-                    <select
-                      class="w-full bg-[#2d2d2d] border border-[#3a3a3a] text-white text-sm rounded-lg focus:border-[#FF9027] block p-2.5 appearance-none cursor-pointer pr-8"
-                      bind:value={selected_subtitle}
-                    >
-                      <option value="" class="bg-[#2d2d2d] text-white">None</option>
-                      <option value="all" class="bg-[#2d2d2d] text-white">All</option>
-                      {#each subtitle_list as sub}
-                        <option value={sub.url} class="bg-[#2d2d2d] text-white">
-                          {sub.name} ({sub.language})
-                        </option>
-                      {/each}
-                    </select>
-                    <div class="absolute inset-y-0 right-3 flex items-center pointer-events-none">
-                      <svg
-                        class="w-4 h-4 text-gray-400"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                          stroke-width="2"
-                          d="M19 9l-7 7-7-7"
-                        />
-                      </svg>
-                    </div>
-                  </div>
-                </div>
-              {/if}
-
-              <button
-                class="w-full py-3 px-4 rounded-lg font-medium text-white transition-all duration-200 flex items-center justify-center gap-2 {getdata
-                  ? 'bg-[#c28851] cursor-not-allowed'
-                  : 'bg-linear-to-r from-[#FF9027] to-[#FF6B00] hover:from-[#FF6B00] hover:to-[#FF9027] hover:shadow-lg hover:shadow-[#FF9027]/20'}"
-                disabled={getdata}
-                onclick={startDownload}
-              >
-                {#if getdata}
-                  <div class="flex items-center">
-                    <svg
-                      class="animate-spin -ml-1 mr-2 h-4 w-4 text-white"
-                      xmlns="http://www.w3.org/2000/svg"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                    >
-                      <circle
-                        class="opacity-25"
-                        cx="12"
-                        cy="12"
-                        r="10"
-                        stroke="currentColor"
-                        stroke-width="4"
-                      ></circle>
-                      <path
-                        class="opacity-75"
-                        fill="currentColor"
-                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                      ></path>
-                    </svg>
-                    Processing...
-                  </div>
-                {:else}
-                  <div class="flex items-center">
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      class="h-5 w-5 mr-1"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                    >
-                      <path
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        stroke-width="2"
-                        d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
-                      />
-                    </svg>
-                    Download
-                  </div>
-                {/if}
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
+    <DownloadOptionsModal
+      {PlayerComponent}
+      useEmbed={settings.use_embed}
+      {embed}
+      {video_test}
+      {thumb_video}
+      {title_video}
+      {proxy_method_video}
+      {subtitle_list}
+      {time_video}
+      {quality_list}
+      bind:format_video
+      bind:selected_quality
+      bind:selected_subtitle
+      {getdata}
+      onClose={window_close}
+      onStart={startDownload}
+      onDuration={handleDuration}
+    />
   {/if}
 </main>

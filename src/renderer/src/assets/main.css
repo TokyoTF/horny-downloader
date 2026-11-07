@@ -15,6 +15,10 @@
   font-family: 'Inter', sans-serif;
 }
 
+:root{
+  --media-video-border-radius:0.5rem;
+}
+
 html,
 body {
   margin: 0;
@@ -133,10 +137,6 @@ label.label_checkbox input:checked ~ .checkbox-type-format {
   display: none;
 }
 
-media-pip-button {
-  display: none;
-}
-
 .container_video_preconfig {
   display: flex;
   flex-direction: column;
@@ -162,4 +162,8 @@ media-pip-button {
 .custom_title p {
   font-size: 14px;
   font-weight: 300;
+}
+
+media-dialog-root {
+  overflow: hidden;
 }

@@ -1,6 +1,5 @@
 import { defineConfig } from 'electron-vite'
 import { svelte } from '@sveltejs/vite-plugin-svelte'
-import { vite as vidstack } from 'vidstack/plugins'
 import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig({
@@ -15,6 +14,6 @@ export default defineConfig({
     },
   },
   renderer: {
-    plugins: [svelte(), vidstack({ include: /player\// }), tailwindcss()]
+    plugins: [svelte(), tailwindcss()]
   }
 })

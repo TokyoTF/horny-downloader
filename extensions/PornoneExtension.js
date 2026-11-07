@@ -11,7 +11,9 @@ export default class PornoneExtension {
       format_support: ['hls'],
       vtt_support: false,
       quality_support: ['4k', '1080', '720', '540', '360', '270'],
-      version: '1.0.0'
+      patterns: ['https://*.pornone.com/*'],
+      referer_url: 'https://pornnone.com/',
+      version: '1.1.0'
     }
     this.extension = new ExtensionExtra(this.config)
   }

@@ -4,55 +4,93 @@ export default class BeegExtension {
       name: 'BEEG',
       color: '#FFCC00b0',
       domains_support: ['beeg.com'],
-      domains_includes: ['/-0'],
+      domains_includes: ['/-0', '/-1'],
       embed_preview: '',
       prefix_url: 'beeg.com',
       referer: true,
       format_support: ['hls', 'mp4'],
       vtt_support: false,
       quality_support: ['4k', '1080', '720', '480', '360', '240'],
-      version: '1.0.0'
+      patterns: [
+        'https://*.externulls.com/*',
+        'https://*.ahcdn.com/*',
+        'https://*.ahacdn.me/*',
+        'https://*.beeg.com/*'
+      ],
+      referer_url: 'https://beeg.com/',
+      version: '1.2.0'
     }
     this.extension = new ExtensionExtra(this.config)
   }
 
+  /**
+   * Beeg ids are numeric and prefixed with a dash, e.g. https://beeg.com/-0561505387022245
+   * The leading zero is not part of the real file id (the API rejects it with a 400).
+   * @param {string} url - Video URL
+   * @returns {string} Numeric video id without leading zeros
+   */
+  extractVideoId(url) {
+    const match = /-(\d{6,})/.exec(url)
+    if (match) return match[1].replace(/^0+/, '')
+    return this.extension.extractVideoId(url)
+  }
+
   async extract(url) {
-    const videoId = this.extension.extractVideoId(url)
-    const req = await fetch(`https://store.externulls.com/facts/file/${videoId}?tag=27173`, {
+    const videoId = this.extractVideoId(url)
+    const headers = this.extension.getDefaultHeaders()
+    const BEEG_CDN = 'https://video.beeg.com'
+    const BEEG_API = 'https://store.externulls.com'
+    
+    const factsReq = await fetch(`${BEEG_API}/facts/file/${videoId}?tag=27173`, {
       redirect: 'follow',
-      headers: this.extension.getDefaultHeaders()
+      headers
     })
+    if (!factsReq.ok) {
+      throw new Error(`Beeg metadata request failed with status ${factsReq.status}`)
+    }
+    const view = await factsReq.json()
 
-    const view = await req.json()
-
-    let video_test = 'https://video.externulls.com/'
-    if (view.file.hls_resources) {
-      video_test = video_test + view.file.hls_resources.fl_cdn_multi
-    } else {
-      video_test = video_test + view.fc_facts[0].hls_resources.fl_cdn_multi
+    // Signed path of the HLS master playlist, valid for a limited time
+    const playReq = await fetch(`${BEEG_API}/video/play_url/${videoId}?tag=27173`, {
+      redirect: 'follow',
+      headers
+    })
+    if (!playReq.ok) {
+      throw new Error(`Beeg play_url request failed with status ${playReq.status}`)
+    }
+    const playPath = (await playReq.text()).trim()
+    if (!playPath.startsWith('key=')) {
+      throw new Error('Unexpected response from Beeg play_url endpoint')
     }
 
-    const res_req = await (
-      await fetch(video_test, { headers: { Referer: 'https://beeg.com/' } })
-    ).text()
+    const video_test = `${BEEG_CDN}/${playPath}`
 
-    let random_thumb = (Math.random() * view.fc_facts[0].fc_thumbs.length - 1).toFixed(0)
-    const thumb_video = view.fc_facts[0].fc_thumbs[random_thumb < 0 ? 0 : random_thumb]
+    const manifest = await (await fetch(video_test, { headers })).text()
 
-    const res = await this.extension.parseResolutions(
-      res_req,
-      video_test.slice(0, video_test.indexOf('/media=')),
-      { part_special: true }
-    )
+    // Variant playlists are absolute paths served by the same CDN host
+    const list_quality = await this.extension.parseResolutions(manifest, BEEG_CDN, {
+      part_special: true
+    })
+
+    const title =
+      view.file?.data?.[0]?.cd_value?.replace(/&period;/g, '.') || `Beeg ${videoId}`
+    const time = this.extension.formatDuration(parseInt(view.file?.fl_duration) || 0)
+
+    const thumbs = view.fc_facts?.[0]?.fc_thumbs || []
+    const thumb = thumbs.length
+      ? `https://thumbs.externulls.com/videos/${videoId}/${
+          thumbs[Math.floor(Math.random() * thumbs.length)]
+        }.webp?size=900x470`
+      : ''
 
     return this.extension.createResponse({
       embed: '',
       video_test,
-      list_quality: res,
-      title: view.file.data[0].cd_value.replace('&period;', '.'),
-      time: this.extension.formatDuration(parseInt(view.file.fl_duration)),
-      thumb: `https://thumbs.externulls.com/videos/${videoId}/${thumb_video == undefined ? 0 : thumb_video}.webp?size=900x470`,
-      status: req.status,
+      list_quality,
+      title,
+      time,
+      thumb,
+      status: factsReq.status,
       force_type: 'application/x-mpegurl'
     })
   }
