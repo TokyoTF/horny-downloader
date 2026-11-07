@@ -1512,23 +1512,23 @@
 
     {#if missingExtUrl}
       <div
-        class="w-full max-w-4xl flex items-center justify-between gap-3 px-4 py-2.5 bg-[#2d2416] border border-[#FF9027]/40 rounded-lg"
+        class="fixed bottom-4 right-4 z-40 w-[calc(100%-2rem)] max-w-sm flex flex-col gap-2 px-3.5 py-2.5 bg-[#2d2416] border border-[#FF9027]/40 rounded-lg shadow-2xl shadow-black/60"
       >
-        <p class="text-xs text-gray-300 truncate">
-          No extension installed for <span class="font-semibold text-white">{missingExtHost}</span>.
+        <p class="text-xs text-gray-300">
+          No extension for <span class="font-semibold text-white">{missingExtHost}</span>
           {#if missingExtMatch}
-            Install the <span class="font-semibold text-white">{missingExtMatch.displayName}</span> extension
-            to download from this site.
+            — install <span class="font-semibold text-white">{missingExtMatch.displayName}</span> to download
+            from this site.
           {:else}
-            Browse the available extensions in Settings.
+            — open the extension list to find one.
           {/if}
         </p>
-        <div class="flex items-center gap-2 shrink-0">
+        <div class="flex items-center justify-end gap-1.5 shrink-0">
           {#if missingExtMatch}
             <button
               onclick={() => installExtension(missingExtMatch)}
               disabled={!!installingExt}
-              class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-medium rounded transition-colors"
+              class="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-medium rounded transition-colors"
             >
               {installingExt === missingExtMatch.name
                 ? 'Installing...'
@@ -1540,7 +1540,7 @@
               extensionsModalOpen = true
               fetchRemoteExtensions()
             }}
-            class="px-3 py-1.5 bg-[#333333] hover:bg-[#3d3d3d] text-gray-200 text-xs font-medium rounded transition-colors"
+            class="px-2.5 py-1 bg-[#333333] hover:bg-[#3d3d3d] text-gray-200 text-xs font-medium rounded transition-colors"
           >
             Extensions
           </button>
