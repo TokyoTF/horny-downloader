@@ -62,7 +62,18 @@
   let availableUpdates = $state([])
   let isCheckingUpdates = $state(false)
   let remoteExtensions = $state([])
-  let isInstalling = $state(false)
+  let installingExt = $state(null) // name of the extension currently installing
+  let missingExtUrl = $state('') // URL that failed with NO_EXTENSION
+  const missingExtMatch = $derived(missingExtUrl ? matchExtensionForUrl(missingExtUrl) : null)
+  const missingExtHost = $derived(
+    (() => {
+      try {
+        return new URL(missingExtUrl).hostname
+      } catch {
+        return ''
+      }
+    })()
+  )
 
   // --- Video & Download State ---
   let url = $state('')
@@ -311,6 +322,10 @@
     // Load List
     window.electron.ipcRenderer.send('getList')
 
+    // Preload the list of installable extensions so it is ready when the
+    // user opens Settings (or hits a URL with no extension).
+    fetchRemoteExtensions()
+
     return () => {
       removeIpcListeners()
     }
@@ -469,8 +484,17 @@
       notifications.error(message || 'Failed to get video data', { duration: 4500 })
       window_video = false
       getdata = false
+      // No extension installed for this site: surface it in the UI so the user
+      // can install the matching extension right away.
+      if (v.error_code === 'NO_EXTENSION') {
+        missingExtUrl = v.error_url || url
+        fetchRemoteExtensions()
+      } else {
+        missingExtUrl = ''
+      }
       return
     }
+    missingExtUrl = ''
 
     if (v.is_batch && v.batch_urls && v.batch_urls.length > 0) {
       window_video = false
@@ -763,7 +787,8 @@
   }
 
   async function installExtension(ext) {
-    isInstalling = true
+    if (installingExt) return
+    installingExt = ext.name
     try {
       notifications.info(`Installing ${ext.displayName}...`, { duration: 2000 })
       const success = await window.electron.ipcRenderer.invoke('install-extension', {
@@ -775,13 +800,24 @@
         notifications.success(`Installed ${ext.displayName}`, { duration: 2000 })
         remoteExtensions = remoteExtensions.filter((e) => e.name !== ext.name)
         await reloadExtensions()
+        if (missingExtUrl) missingExtUrl = ''
       } else {
         notifications.error(`Failed to install ${ext.displayName}`)
       }
     } catch (error) {
       notifications.error(`Error installing ${ext.displayName}`)
     } finally {
-      isInstalling = false
+      installingExt = null
+    }
+  }
+
+  // Match a URL hostname against the available remote extensions, e.g.
+  function matchExtensionForUrl(targetUrl) {
+    try {
+      const host = new URL(targetUrl).hostname.toLowerCase()
+      return remoteExtensions.find((e) => host.includes(e.name.toLowerCase())) || null
+    } catch {
+      return null
     }
   }
 
@@ -1461,6 +1497,51 @@
       {/if}
     </div>
 
+    {#if missingExtUrl}
+      <div
+        class="w-full max-w-4xl flex items-center justify-between gap-3 px-4 py-2.5 bg-[#2d2416] border border-[#FF9027]/40 rounded-lg"
+      >
+        <p class="text-xs text-gray-300 truncate">
+          No extension installed for <span class="font-semibold text-white">{missingExtHost}</span>.
+          {#if missingExtMatch}
+            Install the <span class="font-semibold text-white">{missingExtMatch.displayName}</span> extension
+            to download from this site.
+          {:else}
+            Browse the available extensions in Settings.
+          {/if}
+        </p>
+        <div class="flex items-center gap-2 shrink-0">
+          {#if missingExtMatch}
+            <button
+              onclick={() => installExtension(missingExtMatch)}
+              disabled={!!installingExt}
+              class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-medium rounded transition-colors"
+            >
+              {installingExt === missingExtMatch.name
+                ? 'Installing...'
+                : `Install ${missingExtMatch.displayName}`}
+            </button>
+          {/if}
+          <button
+            onclick={() => {
+              openSettings()
+              fetchRemoteExtensions()
+            }}
+            class="px-3 py-1.5 bg-[#333333] hover:bg-[#3d3d3d] text-gray-200 text-xs font-medium rounded transition-colors"
+          >
+            Settings
+          </button>
+          <button
+            onclick={() => (missingExtUrl = '')}
+            class="p-1 text-gray-400 hover:text-white transition-colors"
+            title="Dismiss"
+          >
+            <XIcon size={14} />
+          </button>
+        </div>
+      </div>
+    {/if}
+
     <div class="flex items-center gap-2">
       <button
         class="px-5 py-2.5 bg-linear-to-r from-[#FF9027] to-[#FF6B00] disabled:from-[#FF9027] disabled:to-[#FF6B00] disabled:opacity-50 disabled:cursor-not-allowed hover:from-[#FF9C3F] hover:to-[#FF7B1C] text-white font-medium rounded-lg flex items-center gap-2 transition-all duration-200 transform hover:scale-105 active:scale-95 focus:outline-none shadow-lg hover:shadow-[#FF9027]/20"
@@ -1693,7 +1774,7 @@
       {availableUpdates}
       {extensions_status}
       bind:remoteExtensions
-      {isInstalling}
+      {installingExt}
       onClose={closeSettings}
       onSave={saveSettings}
       onClearStorage={clearLocalStorage}

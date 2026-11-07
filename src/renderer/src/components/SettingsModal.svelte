@@ -9,7 +9,7 @@
     availableUpdates = [],
     extensions_status = {},
     remoteExtensions = $bindable([]),
-    isInstalling = false,
+    installingExt = null,
     onClose = () => {},
     onSave = () => {},
     onClearStorage = () => {},
@@ -656,10 +656,10 @@
                     </div>
                     <button
                       onclick={() => onInstallExtension(ext)}
-                      disabled={isInstalling}
+                      disabled={!!installingExt}
                       class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-medium rounded transition-colors"
                     >
-                      {isInstalling ? 'Installing...' : 'Install'}
+                      {installingExt === ext.name ? 'Installing...' : 'Install'}
                     </button>
                   </div>
                 {/each}
