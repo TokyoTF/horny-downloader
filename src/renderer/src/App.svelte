@@ -10,6 +10,7 @@
   import { notifications } from './components/NotificationStore'
   import BatchImportModal from './components/BatchImportModal.svelte'
   import SettingsModal from './components/SettingsModal.svelte'
+  import ExtensionsModal from './components/ExtensionsModal.svelte'
   import DownloadItem from './components/DownloadItem.svelte'
   import DownloadOptionsModal from './components/DownloadOptionsModal.svelte'
   import { parseCreatedAt, toSeconds, sameItem, format_time } from './lib/format'
@@ -38,6 +39,7 @@
 
   // --- Settings State ---
   let settings_open = $state(false)
+  let extensionsModalOpen = $state(false)
   let showSettingsPrompt = $state(false)
   let missingSettings = $state([])
   let settings = $state({
@@ -1392,7 +1394,7 @@
         {/if}
         <button
           onclick={() => {
-            openSettings()
+            extensionsModalOpen = true
             fetchRemoteExtensions()
           }}
           class="ml-1.5 px-2 py-0.5 no_move text-xs font-medium rounded-full bg-[#2d2d2d] hover:bg-[#3d3d3d] border border-[#3d3d3d] text-gray-200 flex items-center gap-1.5 transition-colors"
@@ -1535,12 +1537,12 @@
           {/if}
           <button
             onclick={() => {
-              openSettings()
+              extensionsModalOpen = true
               fetchRemoteExtensions()
             }}
             class="px-3 py-1.5 bg-[#333333] hover:bg-[#3d3d3d] text-gray-200 text-xs font-medium rounded transition-colors"
           >
-            Settings
+            Extensions
           </button>
           <button
             onclick={() => (missingExtUrl = '')}
@@ -1782,19 +1784,28 @@
     <SettingsModal
       bind:settings
       {isDev}
+      onClose={closeSettings}
+      onSave={saveSettings}
+      onClearStorage={clearLocalStorage}
+      onSyncExtensions={syncExtensions}
+    />
+  {/if}
+
+  {#if extensionsModalOpen}
+    <ExtensionsModal
+      bind:settings
+      {isDev}
       {availableUpdates}
       {extensions_status}
       bind:remoteExtensions
       {installingExt}
-      onClose={closeSettings}
-      onSave={saveSettings}
-      onClearStorage={clearLocalStorage}
+      onClose={() => (extensionsModalOpen = false)}
       onUpdateExtension={updateExtension}
+      onUpdateAll={updateAllExtensions}
       onReloadExtensions={reloadExtensions}
       onFetchRemoteExtensions={fetchRemoteExtensions}
       onInstallExtension={installExtension}
       onCheckForUpdates={checkForUpdates}
-      onSyncExtensions={syncExtensions}
     />
   {/if}
 
