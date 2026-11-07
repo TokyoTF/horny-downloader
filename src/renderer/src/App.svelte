@@ -1419,7 +1419,50 @@
     >
   </div>
 </div>
-
+{#if missingExtUrl}
+  <div
+    class="fixed bottom-4 right-4 z-40 w-[calc(100%-2rem)] max-w-sm flex flex-col gap-2 px-3.5 py-2.5 bg-[#2d2416] border border-[#FF9027]/40 rounded-lg shadow-2xl shadow-black/60"
+  >
+    <p class="text-xs text-gray-300">
+      No extension for <span class="font-semibold text-white">{missingExtHost}</span>
+      {#if missingExtMatch}
+        — install <span class="font-semibold text-white">{missingExtMatch.displayName}</span> to download
+        from this site.
+      {:else}
+        — open the extension list to find one.
+      {/if}
+    </p>
+    <div class="flex items-center justify-end gap-1.5 shrink-0">
+      {#if missingExtMatch}
+        <button
+          onclick={() => installExtension(missingExtMatch)}
+          disabled={!!installingExt}
+          class="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-medium rounded transition-colors"
+        >
+          {installingExt === missingExtMatch.name
+            ? 'Installing...'
+            : `Install ${missingExtMatch.displayName}`}
+        </button>
+      {/if}
+      <button
+        onclick={() => {
+          extensionsModalOpen = true
+          fetchRemoteExtensions()
+        }}
+        class="px-2.5 py-1 bg-[#333333] hover:bg-[#3d3d3d] text-gray-200 text-xs font-medium rounded transition-colors"
+      >
+        Extensions
+      </button>
+      <button
+        onclick={() => (missingExtUrl = '')}
+        class="p-1 text-gray-400 hover:text-white transition-colors"
+        title="Dismiss"
+      >
+        <XIcon size={14} />
+      </button>
+    </div>
+  </div>
+{/if}
 <div
   class="w-fit flex flex-col justify-center mx-auto gap-3 fixed top-10 py-5 z-10 text-sm px-4 bg-[#141414]/80 backdrop-blur-sm pb-1 pt-6"
 >
@@ -1510,50 +1553,7 @@
       {/if}
     </div>
 
-    {#if missingExtUrl}
-      <div
-        class="fixed bottom-4 right-4 z-40 w-[calc(100%-2rem)] max-w-sm flex flex-col gap-2 px-3.5 py-2.5 bg-[#2d2416] border border-[#FF9027]/40 rounded-lg shadow-2xl shadow-black/60"
-      >
-        <p class="text-xs text-gray-300">
-          No extension for <span class="font-semibold text-white">{missingExtHost}</span>
-          {#if missingExtMatch}
-            — install <span class="font-semibold text-white">{missingExtMatch.displayName}</span> to download
-            from this site.
-          {:else}
-            — open the extension list to find one.
-          {/if}
-        </p>
-        <div class="flex items-center justify-end gap-1.5 shrink-0">
-          {#if missingExtMatch}
-            <button
-              onclick={() => installExtension(missingExtMatch)}
-              disabled={!!installingExt}
-              class="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-medium rounded transition-colors"
-            >
-              {installingExt === missingExtMatch.name
-                ? 'Installing...'
-                : `Install ${missingExtMatch.displayName}`}
-            </button>
-          {/if}
-          <button
-            onclick={() => {
-              extensionsModalOpen = true
-              fetchRemoteExtensions()
-            }}
-            class="px-2.5 py-1 bg-[#333333] hover:bg-[#3d3d3d] text-gray-200 text-xs font-medium rounded transition-colors"
-          >
-            Extensions
-          </button>
-          <button
-            onclick={() => (missingExtUrl = '')}
-            class="p-1 text-gray-400 hover:text-white transition-colors"
-            title="Dismiss"
-          >
-            <XIcon size={14} />
-          </button>
-        </div>
-      </div>
-    {/if}
+    
 
     <div class="flex items-center gap-2">
       <button
