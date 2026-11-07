@@ -11,7 +11,9 @@ export default class PornhubExtension {
       format_support: ['hls', 'mp4'],
       vtt_support: false,
       quality_support: ['1080', '720', '480', '240'],
-      version: '1.0.1'
+      patterns: ['https://*.phncdn.com/*'],
+      referer_url: 'https://www.pornhub.com/',
+      version: '1.1.0'
     }
     this.extension = new ExtensionExtra(this.config)
     this.fetchcookie = this.extension.fetchcookies()

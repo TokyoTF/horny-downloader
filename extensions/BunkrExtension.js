@@ -12,7 +12,22 @@ export default class BunkrExtension {
       format_support: ['mp4'],
       vtt_support: false,
       quality_support: ['original'],
-      version: '1.1.3'
+      patterns: [
+        {
+          url: 'https://*.bunkr.cr/*',
+          headers: { Referer: 'https://bunkr.cr/', Origin: 'https://bunkr.cr/' }
+        },
+        {
+          url: 'https://*.bunkr.site/*',
+          headers: { Referer: 'https://bunkr.site/', Origin: 'https://bunkr.site/' }
+        },
+        {
+          url: 'https://*.bunkr.si/*',
+          headers: { Referer: 'https://bunkr.si/', Origin: 'https://bunkr.si/' }
+        },
+        { url: 'https://*.scdn.st/*', headers: { Referer: 'https://bunkr.cr/' } }
+      ],
+      version: '1.2.0'
     }
     this.extension = new ExtensionExtra(this.config)
   }

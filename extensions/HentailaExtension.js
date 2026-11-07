@@ -12,7 +12,15 @@ export default class HentailaExtension {
       proxy_method: true,
       vtt_support: false,
       quality_support: ['1080', '720', '480'],
-      version: '1.0.0'
+      patterns: [
+        'https://*.hentaila.com/*',
+        {
+          url: 'https://*.hvidserv.com/*',
+          headers: { Referer: 'https://cdn.hvidserv.com', Range: 'bytes=0-', Origin: '' }
+        },
+        { url: 'https://*.anpustream.com/*', headers: { Referer: '', Range: 'bytes=0-' } }
+      ],
+      version: '1.1.0'
     }
     this.extension = new ExtensionExtra(this.config)
     this.fetchcookie = this.extension.fetchcookies()

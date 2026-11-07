@@ -11,7 +11,9 @@ export default class SpankbangExtension {
       format_support: ['hls', 'mp4'],
       vtt_support: false,
       quality_support: ['4k', '1080', '720', '480', '240'],
-      version: '1.1.0'
+      patterns: ['https://*.spankbang.com/*'],
+      referer_url: 'https://spankbang.com/',
+      version: '1.2.0'
     }
     this.extension = new ExtensionExtra(this.config)
     this.fetchcookie = this.extension.fetchcookies()

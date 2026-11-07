@@ -12,7 +12,16 @@ export default class HentaihavenExtension {
       proxy_method: true,
       vtt_support: true,
       quality_support: ['1080', '720', '480'],
-      version: '1.1.1'
+      patterns: [
+        'https://*.hentaihaven.com/*',
+        { url: 'https://*.hentaihaven.xxx/*', headers: { Referer: 'https://hentaihaven.xxx' } },
+        {
+          url: 'https://*.octopusmanifest.org/*',
+          headers: { Referer: '', Origin: 'https://hentaihaven.com' }
+        }
+      ],
+      referer_url: 'https://hentaihaven.com',
+      version: '1.2.0'
     }
     this.extension = new ExtensionExtra(this.config)
     this.fetchcookie = this.extension.fetchcookies()
@@ -200,12 +209,9 @@ export default class HentaihavenExtension {
         if (secureToken && secureToken.startsWith('sha512-')) {
           const config = await this.decodeConfig(secureToken)
           if (config && config.en && config.iv && config.uri) {
-            this.extension.logger.debug('[HentaiHaven] Decoded config URI:', config.uri)
             const apiData = await this.fetchPlayerData(config)
-            this.extension.logger.debug('[HentaiHaven] API response:', JSON.stringify(apiData).substring(0, 500))
             if (apiData?.data?.sources?.length > 0) {
               videoUrl = apiData.data.sources[0].src
-              this.extension.logger.debug('[HentaiHaven] Video URL:', videoUrl)
             }
           }
         }

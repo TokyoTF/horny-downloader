@@ -8,10 +8,10 @@ export default class PorndigExtension {
       embed_preview: '',
       prefix_url: 'www.porndig.com',
       referer: false,
-      format_support: ['hls', 'mpd'],
+      format_support: ['mp4'],
       vtt_support: true,
-      quality_support: ['4k', '1080', '720', '540', '360', '270'],
-      version: '1.0.0'
+      quality_support: ['1080', '720', '540', '360'],
+      version: '1.1.0'
     }
     this.extension = new ExtensionExtra(this.config)
   }
@@ -47,25 +47,63 @@ export default class PorndigExtension {
 
     const view_data = Function(`'use strict'; return (${view_format})`)()
 
-    const res_req_prelink = await (
-      await fetch(view_data.src[0].src, { headers: { Referer: 'https://www.porndig.com/' } })
-    ).text()
+    if (!view_data?.src?.length) {
+      return this.extension.createResponse({
+        embed: '',
+        video_test: '',
+        list_quality: [],
+        title: video_title,
+        time: video_time,
+        thumb: video_thumb,
+        status: 404
+      })
+    }
 
-    const res = await this.extension.parseResolutions(res_req_prelink, view_data.src[0].src, {
-      mpd: res_req_prelink,
-      prefixUrl: view_data.src[0].src,
-      codecForce: 'avc1'
-    })
+    const h264Source = view_data.src.find(
+      (s) => s.type === 'multi-progressive' && s.codec === 'h264'
+    )
+
+    if (h264Source?.srcSet?.length) {
+      const list_quality = h264Source.srcSet.map((s) => ({
+        quality: s.label.replace('p', ''),
+        url: s.src
+      }))
+
+      const video_test = h264Source.srcSet.find((s) => s.active)?.src || h264Source.srcSet[0]?.src
+
+      return this.extension.createResponse({
+        embed: '',
+        video_test,
+        list_quality,
+        title: video_title,
+        time: video_time,
+        thumb: video_thumb,
+        status: req.status
+      })
+    }
+
+    const dashSource = view_data.src.find((s) => s.type === 'application/dash+xml')
+    if (dashSource?.src) {
+      return this.extension.createResponse({
+        embed: '',
+        video_test: dashSource.src,
+        list_quality: [],
+        title: video_title,
+        time: video_time,
+        thumb: video_thumb,
+        status: req.status,
+        force_type: 'application/dash+xml'
+      })
+    }
 
     return this.extension.createResponse({
       embed: '',
-      video_test: view_data.src[0].src,
-      list_quality: res,
+      video_test: '',
+      list_quality: [],
       title: video_title,
       time: video_time,
       thumb: video_thumb,
-      status: req.status,
-      force_type: 'application/dash+xml'
+      status: 404
     })
   }
 }

@@ -11,7 +11,9 @@ export default class PimpbunnyExtension {
       format_support: ['mp4'],
       vtt_support: false,
       quality_support: ['1440', '1080', '720', '480', '360'],
-      version: '1.1.0'
+      patterns: ['https://*.pimpbunny.com/*'],
+      referer_url: 'https://pimpbunny.com/',
+      version: '1.2.0'
     }
     this.extension = new ExtensionExtra(this.config)
   }
