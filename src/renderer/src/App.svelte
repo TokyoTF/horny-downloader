@@ -768,7 +768,8 @@
       notifications.info(`Installing ${ext.displayName}...`, { duration: 2000 })
       const success = await window.electron.ipcRenderer.invoke('install-extension', {
         name: ext.name,
-        branch: settings.extension_branch || 'main'
+        branch: settings.extension_branch || 'main',
+        fileName: ext.fileName
       })
       if (success) {
         notifications.success(`Installed ${ext.displayName}`, { duration: 2000 })
