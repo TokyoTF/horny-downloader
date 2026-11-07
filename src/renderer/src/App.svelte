@@ -1390,6 +1390,17 @@
             <span>Update all extensions ({availableUpdates.length})</span>
           </button>
         {/if}
+        <button
+          onclick={() => {
+            openSettings()
+            fetchRemoteExtensions()
+          }}
+          class="ml-1.5 px-2 py-0.5 no_move text-xs font-medium rounded-full bg-[#2d2d2d] hover:bg-[#3d3d3d] border border-[#3d3d3d] text-gray-200 flex items-center gap-1.5 transition-colors"
+          title="List of extensions"
+        >
+          <List size={12} />
+          <span>Extensions</span>
+        </button>
       </div>
     </div>
   </div>
