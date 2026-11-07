@@ -1026,9 +1026,9 @@ app.whenReady().then(async () => {
     }
   })
 
-  ipcMain.handle('update-extension', async (e, { name, branch }) => {
+  ipcMain.handle('update-extension', async (e, { name, branch, fileName }) => {
     try {
-      return await extensionRegistry.updateExtension(name, branch || 'main')
+      return await extensionRegistry.updateExtension(name, branch || 'main', fileName || null)
     } catch (error) {
       logger.error(`Error updating extension ${name}:`, error)
       return false
@@ -1059,9 +1059,9 @@ app.whenReady().then(async () => {
     }
   })
 
-  ipcMain.handle('install-extension', async (e, { name, branch }) => {
+  ipcMain.handle('install-extension', async (e, { name, branch, fileName }) => {
     try {
-      return await extensionRegistry.installExtension(name, branch || 'main')
+      return await extensionRegistry.installExtension(name, branch || 'main', fileName || null)
     } catch (error) {
       logger.error(`Error installing extension ${name}:`, error)
       return false
