@@ -89,7 +89,7 @@
 </script>
 
 <div
-  class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+  class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 top-10"
   onclick={onClose}
 >
   <div
@@ -181,7 +181,55 @@
           </div>
         </section>
       {/if}
-
+      <!-- Available to install -->
+      <section class="space-y-3">
+        <div class="flex items-center justify-between">
+          <h3 class="text-sm font-semibold text-gray-300 uppercase tracking-wider">
+            Available to install
+          </h3>
+          <button
+            onclick={onFetchRemoteExtensions}
+            class="text-xs text-[#FF9027] hover:text-[#FF6B00] font-medium flex items-center gap-1.5 px-2 py-1 rounded hover:bg-[#FF9027]/10 transition-colors"
+          >
+            <RefreshCw size={14} />
+            Refresh
+          </button>
+        </div>
+        {#if remoteExtensions.length > 0}
+          <div class="space-y-2">
+            {#each remoteExtensions as ext (ext.name)}
+              <div
+                class="flex items-center justify-between p-3 bg-[#252525] rounded-lg border border-[#3a3a3a] hover:border-[#4a4a4a] transition-colors"
+              >
+                <div class="flex items-center gap-3 min-w-0">
+                  <div class="w-2 h-2 bg-blue-500 rounded-full shrink-0"></div>
+                  <div class="min-w-0">
+                    <p class="text-sm font-medium text-white truncate">{ext.displayName}</p>
+                    <p class="text-xs text-gray-400">Not installed</p>
+                  </div>
+                </div>
+                <button
+                  onclick={() => onInstallExtension(ext)}
+                  disabled={!!installingExt}
+                  class="shrink-0 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-medium rounded transition-colors flex items-center gap-1.5"
+                >
+                  {#if installingExt === ext.name}
+                    <RefreshCw size={12} class="animate-spin" />
+                    Installing...
+                  {:else}
+                    <Download size={12} />
+                    Install
+                  {/if}
+                </button>
+              </div>
+            {/each}
+          </div>
+        {:else}
+          <p class="text-center text-sm text-gray-500 py-4">
+            All available extensions are installed 🎉
+          </p>
+        {/if}
+      </section>
       <!-- Installed -->
       <section class="space-y-3">
         <div class="flex items-center justify-between">
@@ -252,55 +300,7 @@
         </div>
       </section>
 
-      <!-- Available to install -->
-      <section class="space-y-3">
-        <div class="flex items-center justify-between">
-          <h3 class="text-sm font-semibold text-gray-300 uppercase tracking-wider">
-            Available to install
-          </h3>
-          <button
-            onclick={onFetchRemoteExtensions}
-            class="text-xs text-[#FF9027] hover:text-[#FF6B00] font-medium flex items-center gap-1.5 px-2 py-1 rounded hover:bg-[#FF9027]/10 transition-colors"
-          >
-            <RefreshCw size={14} />
-            Refresh
-          </button>
-        </div>
-        {#if remoteExtensions.length > 0}
-          <div class="space-y-2">
-            {#each remoteExtensions as ext (ext.name)}
-              <div
-                class="flex items-center justify-between p-3 bg-[#252525] rounded-lg border border-[#3a3a3a] hover:border-[#4a4a4a] transition-colors"
-              >
-                <div class="flex items-center gap-3 min-w-0">
-                  <div class="w-2 h-2 bg-blue-500 rounded-full shrink-0"></div>
-                  <div class="min-w-0">
-                    <p class="text-sm font-medium text-white truncate">{ext.displayName}</p>
-                    <p class="text-xs text-gray-400">Not installed</p>
-                  </div>
-                </div>
-                <button
-                  onclick={() => onInstallExtension(ext)}
-                  disabled={!!installingExt}
-                  class="shrink-0 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-medium rounded transition-colors flex items-center gap-1.5"
-                >
-                  {#if installingExt === ext.name}
-                    <RefreshCw size={12} class="animate-spin" />
-                    Installing...
-                  {:else}
-                    <Download size={12} />
-                    Install
-                  {/if}
-                </button>
-              </div>
-            {/each}
-          </div>
-        {:else}
-          <p class="text-center text-sm text-gray-500 py-4">
-            All available extensions are installed 🎉
-          </p>
-        {/if}
-      </section>
+      
 
       <!-- Errors -->
       <section class="space-y-3">
