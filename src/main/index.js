@@ -1044,6 +1044,11 @@ app.whenReady().then(async () => {
     }
   })
 
+  ipcMain.handle('open-devtools', () => {
+    const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0]
+    if (win && !win.isDestroyed()) win.webContents.toggleDevTools()
+  })
+
   ipcMain.handle('list-local-extensions', async () => {
     try {
       const extensionsDir = is.dev

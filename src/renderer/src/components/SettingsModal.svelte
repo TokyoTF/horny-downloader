@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte'
-  import { SettingsIcon, XIcon, FolderIcon, RefreshCw, Trash2 } from 'lucide-svelte'
+  import { SettingsIcon, XIcon, FolderIcon, RefreshCw, Trash2, TerminalIcon } from 'lucide-svelte'
   import { notifications } from './NotificationStore'
 
   let {
@@ -766,12 +766,22 @@
     </div>
 
     <div class="bg-[#252525] px-6 py-4 border-t border-[#3a3a3a] flex justify-between items-center">
-      <button
-        onclick={onClearStorage}
-        class="px-4 py-2 text-sm font-medium text-red-400 hover:text-red-300 bg-[#333333] hover:bg-[#3d3d3d] rounded-lg transition-colors duration-200"
-      >
-        Clear LocalStorage
-      </button>
+      <div class="flex space-x-3">
+        <button
+          onclick={onClearStorage}
+          class="px-4 py-2 text-sm font-medium text-red-400 hover:text-red-300 bg-[#333333] hover:bg-[#3d3d3d] rounded-lg transition-colors duration-200"
+        >
+          Clear LocalStorage
+        </button>
+        <button
+          onclick={() => window.electron.ipcRenderer.invoke('open-devtools')}
+          class="px-4 py-2 text-sm font-medium text-gray-300 hover:text-white bg-[#333333] hover:bg-[#3d3d3d] rounded-lg transition-colors duration-200 flex items-center gap-2"
+          title="Open DevTools"
+        >
+          <TerminalIcon size={14} />
+          DevTools
+        </button>
+      </div>
       <div class="flex space-x-3">
         <button
           onclick={onClose}
